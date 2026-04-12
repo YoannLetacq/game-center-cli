@@ -321,18 +321,41 @@ async fn handle_client_msg(
                 Ok(all_players) => {
                     session.current_room = Some(*room_id);
 
-                    // Broadcast PlayerJoined to all existing players in the room
-                    let broadcasts: Vec<(PlayerId, ServerMsg)> = existing_players
+                    // Broadcast PlayerJoined to existing players
+                    let mut broadcasts: Vec<(PlayerId, ServerMsg)> = existing_players
                         .iter()
                         .filter(|p| p.id != player_id)
                         .map(|p| (p.id, ServerMsg::PlayerJoined(joiner.clone())))
                         .collect();
 
+                    // Check if game auto-started (room became full)
+                    let room_state = {
+                        let games = state.lobby.games.read().await;
+                        if games.contains_key(room_id) {
+                            // Game started — send initial state to all players
+                            if let Some(game) = games.get(room_id) {
+                                let state_data = game.encode_state();
+                                for player in &all_players {
+                                    broadcasts.push((
+                                        player.id,
+                                        ServerMsg::GameStateUpdate {
+                                            tick: 0,
+                                            state_data: state_data.clone(),
+                                        },
+                                    ));
+                                }
+                            }
+                            gc_shared::types::RoomState::InProgress
+                        } else {
+                            gc_shared::types::RoomState::Waiting
+                        }
+                    };
+
                     HandleResult {
                         response: Some(ServerMsg::RoomJoined {
                             room_id: *room_id,
                             players: all_players,
-                            state: gc_shared::types::RoomState::Waiting,
+                            state: room_state,
                         }),
                         broadcasts,
                     }
@@ -379,6 +402,42 @@ async fn handle_client_msg(
                     code: 400,
                     message: "not in a room".to_string(),
                 })
+            }
+        }
+        ClientMsg::GameAction { data } => {
+            let player_id = match session.player_id {
+                Some(id) => id,
+                None => {
+                    return HandleResult::reply(ServerMsg::AuthFail {
+                        reason: "not authenticated".to_string(),
+                    });
+                }
+            };
+            let room_id = match session.current_room {
+                Some(id) => id,
+                None => {
+                    return HandleResult::reply(ServerMsg::Error {
+                        code: 400,
+                        message: "not in a room".to_string(),
+                    });
+                }
+            };
+
+            let mut games = state.lobby.games.write().await;
+            let game = match games.get_mut(&room_id) {
+                Some(g) => g,
+                None => {
+                    return HandleResult::reply(ServerMsg::Error {
+                        code: 400,
+                        message: "no active game in this room".to_string(),
+                    });
+                }
+            };
+
+            let (response, broadcasts) = game.apply_action(player_id, data);
+            HandleResult {
+                response: Some(response),
+                broadcasts,
             }
         }
         _ => {
@@ -455,11 +514,16 @@ async fn handle_register(
                 }
             };
             // Authenticate the session
-            if let Ok(pid) = Uuid::parse_str(&user_id) {
-                session.authenticate(PlayerId(pid), username.to_string());
-            }
+            let pid = Uuid::parse_str(&user_id)
+                .map(PlayerId)
+                .expect("just-created UUID is valid");
+            session.authenticate(pid, username.to_string());
             info!(username, "user registered");
-            Some(ServerMsg::AuthOk { token, expires_at })
+            Some(ServerMsg::AuthOk {
+                token,
+                expires_at,
+                player_id: pid,
+            })
         }
         Ok(Err(rusqlite::Error::SqliteFailure(err, _)))
             if err.code == rusqlite::ErrorCode::ConstraintViolation =>
@@ -527,13 +591,17 @@ async fn handle_login(
         }
     };
 
-    let pid = Uuid::parse_str(&user_id).ok().map(PlayerId);
-    if let Some(pid) = pid {
-        session.authenticate(pid, username.to_string());
-    }
+    let pid = Uuid::parse_str(&user_id)
+        .map(PlayerId)
+        .expect("DB user_id is valid UUID");
+    session.authenticate(pid, username.to_string());
 
     info!(username, "user logged in");
-    Some(ServerMsg::AuthOk { token, expires_at })
+    Some(ServerMsg::AuthOk {
+        token,
+        expires_at,
+        player_id: pid,
+    })
 }
 
 fn handle_authenticate(
@@ -543,14 +611,15 @@ fn handle_authenticate(
 ) -> Option<ServerMsg> {
     match state.jwt.validate_token(token) {
         Ok(claims) => {
-            let pid = Uuid::parse_str(&claims.sub).ok().map(PlayerId);
-            if let Some(pid) = pid {
-                session.authenticate(pid, claims.username.clone());
-            }
+            let pid = Uuid::parse_str(&claims.sub)
+                .map(PlayerId)
+                .expect("JWT sub is valid UUID");
+            session.authenticate(pid, claims.username.clone());
             info!(username = claims.username, "token authenticated");
             Some(ServerMsg::AuthOk {
                 token: token.to_string(),
                 expires_at: claims.exp,
+                player_id: pid,
             })
         }
         Err(reason) => Some(ServerMsg::AuthFail { reason }),

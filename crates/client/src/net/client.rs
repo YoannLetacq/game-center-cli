@@ -34,6 +34,9 @@ pub enum NetCommand {
         room_id: gc_shared::types::RoomId,
     },
     LeaveRoom,
+    GameAction {
+        data: Vec<u8>,
+    },
     Disconnect,
 }
 
@@ -49,6 +52,12 @@ pub enum NetEvent {
     },
     PlayerJoined(gc_shared::types::PlayerInfo),
     PlayerLeft(gc_shared::types::PlayerId),
+    GameStateUpdate {
+        state_data: Vec<u8>,
+    },
+    GameOver {
+        outcome: gc_shared::types::GameOutcome,
+    },
     Error(String),
     Disconnected,
     #[allow(dead_code)]
@@ -211,6 +220,11 @@ async fn handle_command(
                 let _ = c.send(ClientMsg::JoinRoom { room_id }).await;
             }
         }
+        NetCommand::GameAction { data } => {
+            if let Some(c) = conn {
+                let _ = c.send(ClientMsg::GameAction { data }).await;
+            }
+        }
         NetCommand::LeaveRoom => {
             if let Some(c) = conn {
                 let _ = c.send(ClientMsg::LeaveRoom).await;
@@ -288,6 +302,8 @@ fn dispatch_server_msg(msg: ServerMsg, event_tx: &std_mpsc::Sender<NetEvent>) {
         } => NetEvent::RoomJoined { room_id, players },
         ServerMsg::PlayerJoined(info) => NetEvent::PlayerJoined(info),
         ServerMsg::PlayerLeft(id) => NetEvent::PlayerLeft(id),
+        ServerMsg::GameStateUpdate { state_data, .. } => NetEvent::GameStateUpdate { state_data },
+        ServerMsg::GameOver { outcome } => NetEvent::GameOver { outcome },
         ServerMsg::Error { message, .. } => NetEvent::Error(message),
         ServerMsg::AuthFail { reason } => NetEvent::Error(reason),
         other => NetEvent::ServerMessage(other),

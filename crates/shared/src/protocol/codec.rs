@@ -51,6 +51,7 @@ mod tests {
             payload: ServerMsg::AuthOk {
                 token: "test-jwt".to_string(),
                 expires_at: 1700000000,
+                player_id: crate::types::PlayerId::new(),
             },
         };
 
@@ -59,7 +60,9 @@ mod tests {
 
         assert_eq!(decoded.seq, 1);
         match decoded.payload {
-            ServerMsg::AuthOk { token, expires_at } => {
+            ServerMsg::AuthOk {
+                token, expires_at, ..
+            } => {
                 assert_eq!(token, "test-jwt");
                 assert_eq!(expires_at, 1700000000);
             }

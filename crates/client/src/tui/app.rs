@@ -1,6 +1,7 @@
+use gc_shared::game::tictactoe::TicTacToeState;
 use gc_shared::i18n::{Language, Translator};
 use gc_shared::protocol::messages::RoomSummary;
-use gc_shared::types::{PlayerInfo, RoomId};
+use gc_shared::types::{GameOutcome, PlayerId, PlayerInfo, RoomId};
 
 use crate::database::ClientDatabase;
 
@@ -10,6 +11,7 @@ pub enum Screen {
     Login,
     Lobby,
     Room,
+    InGame,
 }
 
 /// The mode of the login screen.
@@ -47,6 +49,13 @@ pub struct App {
     pub current_room_id: Option<RoomId>,
     pub current_room_players: Vec<PlayerInfo>,
 
+    // Game state
+    pub game_state: Option<TicTacToeState>,
+    pub cursor_row: u8,
+    pub cursor_col: u8,
+    pub game_over: Option<GameOutcome>,
+    pub my_player_id: Option<PlayerId>,
+
     // Generic status error (shown on lobby/room screens)
     pub status_error: Option<String>,
 }
@@ -80,6 +89,11 @@ impl App {
             selected_room: 0,
             current_room_id: None,
             current_room_players: Vec::new(),
+            game_state: None,
+            cursor_row: 1,
+            cursor_col: 1,
+            game_over: None,
+            my_player_id: None,
             status_error: None,
         }
     }
@@ -163,7 +177,26 @@ impl App {
     pub fn on_room_left(&mut self) {
         self.current_room_id = None;
         self.current_room_players.clear();
+        self.game_state = None;
+        self.game_over = None;
+        self.cursor_row = 1;
+        self.cursor_col = 1;
         self.screen = Screen::Lobby;
+    }
+
+    /// Called when game state is received from server.
+    pub fn on_game_state(&mut self, state_data: &[u8]) {
+        if let Ok(state) = gc_shared::protocol::codec::decode::<TicTacToeState>(state_data) {
+            self.game_state = Some(state);
+            if self.screen == Screen::Room {
+                self.screen = Screen::InGame;
+            }
+        }
+    }
+
+    /// Called when game is over.
+    pub fn on_game_over(&mut self, outcome: GameOutcome) {
+        self.game_over = Some(outcome);
     }
 
     /// Called when a player joins our room.

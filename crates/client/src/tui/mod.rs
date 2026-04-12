@@ -1,5 +1,6 @@
 pub mod app;
 pub mod event;
+pub mod render;
 pub mod screens;
 
 use std::io;
@@ -37,6 +38,7 @@ pub fn run(mut app: App) -> io::Result<()> {
             Screen::Login => screens::login::render(frame, &app),
             Screen::Lobby => screens::lobby::render(frame, &app),
             Screen::Room => screens::room::render(frame, &app),
+            Screen::InGame => render::tictactoe::render(frame, &app),
         })?;
 
         // Process network events (non-blocking)
@@ -83,7 +85,9 @@ fn handle_net_event(app: &mut App, event: NetEvent, net: &NetworkClient) {
         NetEvent::AuthResult(gc_shared::protocol::messages::ServerMsg::AuthOk {
             token,
             expires_at,
+            player_id,
         }) => {
+            app.my_player_id = Some(player_id);
             let _ = app.db.save_token(&token, expires_at);
             app.on_auth_success(token);
             let _ = net.send(NetCommand::ListRooms);
@@ -93,6 +97,12 @@ fn handle_net_event(app: &mut App, event: NetEvent, net: &NetworkClient) {
         }
         NetEvent::RoomJoined { room_id, players } => {
             app.on_room_joined(room_id, players);
+        }
+        NetEvent::GameStateUpdate { state_data } => {
+            app.on_game_state(&state_data);
+        }
+        NetEvent::GameOver { outcome } => {
+            app.on_game_over(outcome);
         }
         NetEvent::PlayerJoined(player) => {
             app.on_player_joined(player);
@@ -120,7 +130,7 @@ fn handle_net_event(app: &mut App, event: NetEvent, net: &NetworkClient) {
 fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, net: &NetworkClient) {
     if code == KeyCode::Esc {
         match app.screen {
-            Screen::Room => {
+            Screen::Room | Screen::InGame => {
                 let _ = net.send(NetCommand::LeaveRoom);
                 app.on_room_left();
                 let _ = net.send(NetCommand::ListRooms);
@@ -141,6 +151,7 @@ fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, net: &Netwo
         Screen::Login => handle_login_key(app, code, net),
         Screen::Lobby => handle_lobby_key(app, code, net),
         Screen::Room => {}
+        Screen::InGame => handle_game_key(app, code, net),
     }
 }
 
@@ -219,6 +230,52 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         KeyCode::Enter => {
             if let Some(room) = app.rooms.get(app.selected_room) {
                 let _ = net.send(NetCommand::JoinRoom { room_id: room.id });
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_game_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
+    if app.game_over.is_some() {
+        return;
+    }
+
+    let is_our_turn = app
+        .game_state
+        .as_ref()
+        .is_some_and(|s| Some(s.players[s.current_turn]) == app.my_player_id);
+
+    match code {
+        KeyCode::Up => {
+            if app.cursor_row > 0 {
+                app.cursor_row -= 1;
+            }
+        }
+        KeyCode::Down => {
+            if app.cursor_row < 2 {
+                app.cursor_row += 1;
+            }
+        }
+        KeyCode::Left => {
+            if app.cursor_col > 0 {
+                app.cursor_col -= 1;
+            }
+        }
+        KeyCode::Right => {
+            if app.cursor_col < 2 {
+                app.cursor_col += 1;
+            }
+        }
+        KeyCode::Enter => {
+            if is_our_turn {
+                let mv = gc_shared::game::tictactoe::TicTacToeMove {
+                    row: app.cursor_row,
+                    col: app.cursor_col,
+                };
+                if let Ok(data) = gc_shared::protocol::codec::encode(&mv) {
+                    let _ = net.send(NetCommand::GameAction { data });
+                }
             }
         }
         _ => {}
