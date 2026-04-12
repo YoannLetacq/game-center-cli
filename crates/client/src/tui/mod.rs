@@ -28,6 +28,7 @@ pub fn run(mut app: App) -> io::Result<()> {
 
     let events = EventHandler::new(50);
     let net = NetworkClient::new();
+    let mut lobby_refresh_counter: u8 = 0;
 
     // Main loop
     while app.running {
@@ -47,7 +48,18 @@ pub fn run(mut app: App) -> io::Result<()> {
         if let Ok(event) = events.recv() {
             match event {
                 Event::Key(key) => handle_key(&mut app, key.code, key.modifiers, &net),
-                Event::Tick => {}
+                Event::Tick => {
+                    // Auto-refresh lobby room list every ~2 seconds (40 ticks * 50ms)
+                    if app.screen == Screen::Lobby && app.authenticated {
+                        lobby_refresh_counter += 1;
+                        if lobby_refresh_counter >= 40 {
+                            lobby_refresh_counter = 0;
+                            let _ = net.send(NetCommand::ListRooms);
+                        }
+                    } else {
+                        lobby_refresh_counter = 0;
+                    }
+                }
             }
         }
     }
