@@ -568,6 +568,7 @@ dependencies = [
  "gc-shared",
  "ratatui",
  "rusqlite",
+ "rustls",
  "serde",
  "tokio",
  "tokio-rustls",
