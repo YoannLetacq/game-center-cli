@@ -1,0 +1,22 @@
+[package]
+name = "gc-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+argon2 = { version = "0.5.3", features = ["std"] }
+futures-util = "0.3.32"
+gc-shared = { version = "0.1.0", path = "../shared" }
+jsonwebtoken = { version = "10.3.0", features = ["aws_lc_rs"] }
+rusqlite = { version = "0.39.0", features = ["bundled"] }
+rustls = { version = "0.23.37", features = ["aws_lc_rs"] }
+rustls-pemfile = "2.2.0"
+serde = { version = "1.0.228", features = ["derive"] }
+tokio = { version = "1.51.1", features = ["full"] }
+tokio-rustls = "0.26.4"
+tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-native-roots"] }
+toml = "1.1.2"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["json"] }
+uuid = { version = "1.23.0", features = ["v4", "serde"] }
