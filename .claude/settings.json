@@ -1,0 +1,75 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(**/*.rs)",
+      "Read(**/*.toml)",
+      "Read(**/*.json)",
+      "Read(**/*.yaml)",
+      "Read(**/*.yml)",
+      "Read(**/*.md)",
+      "Read(**/*.txt)",
+      "Read(**/*.html)",
+      "Read(**/*.css)",
+      "Read(**/*.sql)",
+      "Edit(**/*.rs)",
+      "Edit(**/*.toml)",
+      "Edit(**/*.json)",
+      "Edit(**/*.yaml)",
+      "Edit(**/*.yml)",
+      "Edit(**/*.md)",
+      "Edit(**/*.txt)",
+      "Edit(**/*.html)",
+      "Edit(**/*.css)",
+      "Edit(**/*.sql)",
+      "Bash(cargo:*)",
+      "Bash(rustc:*)",
+      "Bash(git:*)",
+      "Bash(mkdir:*)",
+      "Bash(touch:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(rm:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(wc:*)",
+      "Bash(sort:*)",
+      "Bash(diff:*)",
+      "Bash(echo:*)",
+      "Bash(chmod:*)",
+      "Bash(curl:*)",
+      "Bash(tar:*)",
+      "Bash(unzip:*)",
+      "Bash(which:*)",
+      "Bash(ln:*)",
+      "Bash(xargs:*)",
+      "Bash(sed:*)",
+      "Bash(awk:*)"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Read(.env.*)",
+      "Edit(.env)",
+      "Edit(.env.*)",
+      "Read(**/credentials/**)",
+      "Edit(**/credentials/**)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/lint-on-edit.sh",
+            "timeout": 30,
+            "statusMessage": "Running clippy lint check..."
+          }
+        ]
+      }
+    ]
+  }
+}
