@@ -11,6 +11,7 @@ futures-util = "0.3.32"
 gc-shared = { version = "0.1.0", path = "../shared" }
 ratatui = "0.30.0"
 rusqlite = { version = "0.39.0", features = ["bundled"] }
+rustls = { version = "0.23.37", features = ["aws_lc_rs"] }
 serde = { version = "1.0.228", features = ["derive"] }
 tokio = { version = "1.51.1", features = ["full"] }
 tokio-rustls = "0.26.4"
