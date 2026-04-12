@@ -38,24 +38,14 @@ impl TurnBasedGame {
     }
 
     /// Process a game action (move) from a player.
-    /// Returns: (response for the acting player, broadcasts for all players).
+    /// Returns: (response for the acting player, broadcasts for other players).
     pub fn apply_action(
         &mut self,
         player: PlayerId,
         action_data: &[u8],
     ) -> (ServerMsg, Vec<(PlayerId, ServerMsg)>) {
-        let state = match &self.state {
-            GameState::TicTacToe(s) => s.clone(),
-        };
-        self.apply_tictactoe_action(state, player, action_data)
-    }
+        let GameState::TicTacToe(ref mut state) = self.state;
 
-    fn apply_tictactoe_action(
-        &mut self,
-        mut state: TicTacToeState,
-        player: PlayerId,
-        action_data: &[u8],
-    ) -> (ServerMsg, Vec<(PlayerId, ServerMsg)>) {
         // Decode the move
         let mv: TicTacToeMove = match codec::decode(action_data) {
             Ok(m) => m,
@@ -71,7 +61,7 @@ impl TurnBasedGame {
         };
 
         // Validate
-        if let Err(reason) = TicTacToe::validate_move(&state, player, &mv) {
+        if let Err(reason) = TicTacToe::validate_move(state, player, &mv) {
             return (
                 ServerMsg::Error {
                     code: 400,
@@ -81,31 +71,37 @@ impl TurnBasedGame {
             );
         }
 
-        // Apply
-        TicTacToe::apply_move(&mut state, player, &mv);
-
-        // Update our stored state
-        self.state = GameState::TicTacToe(state.clone());
+        // Apply move in-place (no clone)
+        TicTacToe::apply_move(state, player, &mv);
 
         // Encode state for broadcast
         let state_bytes = codec::encode(&state).unwrap_or_default();
+        let tick = state.move_count as u64;
+
+        // Build the state update message (same for response and broadcasts)
+        let state_msg = ServerMsg::GameStateUpdate {
+            tick,
+            state_data: state_bytes,
+        };
+
+        // Broadcasts go to OTHER players only (acting player gets the direct response)
+        let others: Vec<PlayerId> = self
+            .players
+            .iter()
+            .filter(|&&pid| pid != player)
+            .copied()
+            .collect();
+
+        let mut broadcasts: Vec<(PlayerId, ServerMsg)> =
+            others.iter().map(|&pid| (pid, state_msg.clone())).collect();
 
         // Check for game over
-        let mut broadcasts: Vec<(PlayerId, ServerMsg)> = Vec::new();
-
-        if let Some(outcome) = TicTacToe::is_terminal(&state) {
+        if let Some(outcome) = TicTacToe::is_terminal(state) {
             self.finished = true;
             info!(game_type = ?self.game_type, ?outcome, "game finished");
 
-            // Send final state + game over to all players
+            // Send GameOver to ALL players (acting player via broadcast too)
             for &pid in &self.players {
-                broadcasts.push((
-                    pid,
-                    ServerMsg::GameStateUpdate {
-                        tick: state.move_count as u64,
-                        state_data: state_bytes.clone(),
-                    },
-                ));
                 broadcasts.push((
                     pid,
                     ServerMsg::GameOver {
@@ -113,34 +109,9 @@ impl TurnBasedGame {
                     },
                 ));
             }
-
-            return (
-                ServerMsg::GameStateUpdate {
-                    tick: state.move_count as u64,
-                    state_data: state_bytes,
-                },
-                broadcasts,
-            );
         }
 
-        // Not over: broadcast updated state to all players
-        for &pid in &self.players {
-            broadcasts.push((
-                pid,
-                ServerMsg::GameStateUpdate {
-                    tick: state.move_count as u64,
-                    state_data: state_bytes.clone(),
-                },
-            ));
-        }
-
-        (
-            ServerMsg::GameStateUpdate {
-                tick: state.move_count as u64,
-                state_data: state_bytes,
-            },
-            broadcasts,
-        )
+        (state_msg, broadcasts)
     }
 
     /// Get the current player whose turn it is.
@@ -194,8 +165,8 @@ mod tests {
             other => panic!("expected GameStateUpdate, got {other:?}"),
         }
 
-        // Both players get the state update
-        assert_eq!(broadcasts.len(), 2);
+        // Only the OTHER player gets the broadcast (acting player gets the direct response)
+        assert_eq!(broadcasts.len(), 1);
     }
 
     #[test]
@@ -224,11 +195,18 @@ mod tests {
 
         assert!(game.finished);
 
-        // Should have state updates + game over for both players
+        // 1 state update (to other player) + 2 game overs (to both) = 3 broadcasts
         let game_overs: Vec<_> = broadcasts
             .iter()
             .filter(|(_, msg)| matches!(msg, ServerMsg::GameOver { .. }))
             .collect();
         assert_eq!(game_overs.len(), 2);
+
+        let state_updates: Vec<_> = broadcasts
+            .iter()
+            .filter(|(_, msg)| matches!(msg, ServerMsg::GameStateUpdate { .. }))
+            .collect();
+        assert_eq!(state_updates.len(), 1); // only to other player
+        assert_eq!(broadcasts.len(), 3);
     }
 }

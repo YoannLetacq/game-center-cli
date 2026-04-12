@@ -331,19 +331,16 @@ async fn handle_client_msg(
                     // Check if game auto-started (room became full)
                     let room_state = {
                         let games = state.lobby.games.read().await;
-                        if games.contains_key(room_id) {
-                            // Game started — send initial state to all players
-                            if let Some(game) = games.get(room_id) {
-                                let state_data = game.encode_state();
-                                for player in &all_players {
-                                    broadcasts.push((
-                                        player.id,
-                                        ServerMsg::GameStateUpdate {
-                                            tick: 0,
-                                            state_data: state_data.clone(),
-                                        },
-                                    ));
-                                }
+                        if let Some(game) = games.get(room_id) {
+                            let state_data = game.encode_state();
+                            for player in &all_players {
+                                broadcasts.push((
+                                    player.id,
+                                    ServerMsg::GameStateUpdate {
+                                        tick: 0,
+                                        state_data: state_data.clone(),
+                                    },
+                                ));
                             }
                             gc_shared::types::RoomState::InProgress
                         } else {
