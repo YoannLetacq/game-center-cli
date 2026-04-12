@@ -9,17 +9,19 @@ use tracing::{error, info, warn};
 use gc_shared::protocol::codec;
 use gc_shared::protocol::messages::{ClientMsg, Envelope, ServerMsg};
 use gc_shared::protocol::version::{MIN_CLIENT_VERSION, PROTOCOL_VERSION};
-use gc_shared::types::PlayerId;
+use gc_shared::types::{PlayerId, PlayerInfo};
 use uuid::Uuid;
 
 use crate::auth::jwt::JwtManager;
 use crate::database::Database;
+use crate::lobby::manager::LobbyManager;
 use crate::ws::session::Session;
 
 /// Shared state passed to each connection handler.
 pub struct ServerState {
     pub db: Database,
     pub jwt: JwtManager,
+    pub lobby: LobbyManager,
 }
 
 /// Handle a single WebSocket connection over TLS.
@@ -101,6 +103,13 @@ pub async fn handle_connection(tls_stream: TlsStream<TcpStream>, state: Arc<Serv
         session.touch();
     }
 
+    // Clean up: remove player from room on disconnect
+    if let Some(player_id) = session.player_id
+        && let Some((room_id, _)) = state.lobby.leave_room(player_id).await
+    {
+        info!(%room_id, %player_id, "player removed from room on disconnect");
+    }
+
     info!(session_id = %session.session_id, "connection closed");
 }
 
@@ -124,8 +133,95 @@ async fn handle_client_msg(
                     reason: "not authenticated".to_string(),
                 });
             }
-            // Room listing will be implemented in Phase 3
-            Some(ServerMsg::RoomList(vec![]))
+            let rooms = state.lobby.list_rooms().await;
+            Some(ServerMsg::RoomList(rooms))
+        }
+        ClientMsg::CreateRoom {
+            game_type,
+            settings,
+        } => {
+            let player_id = match session.player_id {
+                Some(id) => id,
+                None => {
+                    return Some(ServerMsg::AuthFail {
+                        reason: "not authenticated".to_string(),
+                    });
+                }
+            };
+            let player = PlayerInfo {
+                id: player_id,
+                username: session.username.clone().unwrap_or_default(),
+            };
+            match state
+                .lobby
+                .create_room(*game_type, settings.clone(), player)
+                .await
+            {
+                Ok(room_id) => {
+                    session.current_room = Some(room_id);
+                    let players = state
+                        .lobby
+                        .get_room_players(room_id)
+                        .await
+                        .unwrap_or_default();
+                    Some(ServerMsg::RoomJoined {
+                        room_id,
+                        players,
+                        state: gc_shared::types::RoomState::Waiting,
+                    })
+                }
+                Err(reason) => Some(ServerMsg::Error {
+                    code: 400,
+                    message: reason,
+                }),
+            }
+        }
+        ClientMsg::JoinRoom { room_id } => {
+            let player_id = match session.player_id {
+                Some(id) => id,
+                None => {
+                    return Some(ServerMsg::AuthFail {
+                        reason: "not authenticated".to_string(),
+                    });
+                }
+            };
+            let player = PlayerInfo {
+                id: player_id,
+                username: session.username.clone().unwrap_or_default(),
+            };
+            match state.lobby.join_room(*room_id, player).await {
+                Ok(players) => {
+                    session.current_room = Some(*room_id);
+                    Some(ServerMsg::RoomJoined {
+                        room_id: *room_id,
+                        players,
+                        state: gc_shared::types::RoomState::Waiting,
+                    })
+                }
+                Err(reason) => Some(ServerMsg::Error {
+                    code: 400,
+                    message: reason,
+                }),
+            }
+        }
+        ClientMsg::LeaveRoom => {
+            let player_id = match session.player_id {
+                Some(id) => id,
+                None => {
+                    return Some(ServerMsg::AuthFail {
+                        reason: "not authenticated".to_string(),
+                    });
+                }
+            };
+            session.current_room = None;
+            if let Some((_room_id, _is_empty)) = state.lobby.leave_room(player_id).await {
+                Some(ServerMsg::RoomList(state.lobby.list_rooms().await))
+            } else {
+                Some(ServerMsg::Error {
+                    code: 400,
+                    message: "not in a room".to_string(),
+                })
+            }
         }
         _ => {
             if !session.authenticated {
@@ -133,7 +229,6 @@ async fn handle_client_msg(
                     reason: "not authenticated".to_string(),
                 })
             } else {
-                // Other messages (room, game) will be handled in later phases
                 Some(ServerMsg::Error {
                     code: 501,
                     message: "not yet implemented".to_string(),
