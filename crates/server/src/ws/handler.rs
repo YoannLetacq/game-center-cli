@@ -197,7 +197,7 @@ async fn handle_client_msg(
 ) -> HandleResult {
     match msg {
         ClientMsg::Register { username, password } => {
-            let resp = handle_register(username, password, state).await;
+            let resp = handle_register(username, password, session, state).await;
             // Register in player registry on successful auth
             if let Some(ServerMsg::AuthOk { .. }) = &resp
                 && let Some(pid) = session.player_id
@@ -396,7 +396,12 @@ async fn handle_client_msg(
     }
 }
 
-async fn handle_register(username: &str, password: &str, state: &ServerState) -> Option<ServerMsg> {
+async fn handle_register(
+    username: &str,
+    password: &str,
+    session: &mut Session,
+    state: &ServerState,
+) -> Option<ServerMsg> {
     if username.is_empty() || password.len() < 8 {
         return Some(ServerMsg::AuthFail {
             reason: "username required, password must be at least 8 characters".to_string(),
@@ -449,6 +454,10 @@ async fn handle_register(username: &str, password: &str, state: &ServerState) ->
                     });
                 }
             };
+            // Authenticate the session
+            if let Ok(pid) = Uuid::parse_str(&user_id) {
+                session.authenticate(PlayerId(pid), username.to_string());
+            }
             info!(username, "user registered");
             Some(ServerMsg::AuthOk { token, expires_at })
         }
