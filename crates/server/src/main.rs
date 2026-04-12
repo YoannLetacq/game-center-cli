@@ -52,7 +52,13 @@ async fn main() {
     let jwt = auth::jwt::JwtManager::new(jwt_secret.as_bytes(), config.auth.token_expiry_secs);
 
     let lobby = lobby::manager::LobbyManager::new();
-    let state = Arc::new(ServerState { db, jwt, lobby });
+    let players = ws::handler::PlayerRegistry::default();
+    let state = Arc::new(ServerState {
+        db,
+        jwt,
+        lobby,
+        players,
+    });
 
     // Spawn periodic room cleanup
     {

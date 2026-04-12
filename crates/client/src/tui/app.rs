@@ -46,6 +46,9 @@ pub struct App {
     // Room state
     pub current_room_id: Option<RoomId>,
     pub current_room_players: Vec<PlayerInfo>,
+
+    // Generic status error (shown on lobby/room screens)
+    pub status_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +80,7 @@ impl App {
             selected_room: 0,
             current_room_id: None,
             current_room_players: Vec::new(),
+            status_error: None,
         }
     }
 

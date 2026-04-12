@@ -89,7 +89,11 @@ fn handle_net_event(app: &mut App, event: NetEvent, net: &NetworkClient) {
             app.on_player_left(player_id);
         }
         NetEvent::Error(msg) => {
-            app.on_auth_failure(msg);
+            // Route error to the right screen
+            match app.screen {
+                Screen::Login => app.on_auth_failure(msg),
+                _ => app.status_error = Some(msg),
+            }
         }
         NetEvent::Disconnected => {
             app.authenticated = false;
@@ -178,6 +182,7 @@ fn handle_login_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
 }
 
 fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
+    app.status_error = None; // Clear error on any key press
     match code {
         KeyCode::Char('q') => app.quit(),
         KeyCode::Char('r') | KeyCode::Char('R') => {

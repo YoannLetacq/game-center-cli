@@ -9,12 +9,14 @@ use crate::tui::app::App;
 pub fn render(frame: &mut Frame, app: &App) {
     let t = &app.translator;
 
+    let has_error = app.status_error.is_some();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // header
-            Constraint::Min(5),    // room list
-            Constraint::Length(3), // footer
+            Constraint::Length(3),                             // header
+            Constraint::Length(if has_error { 1 } else { 0 }), // error bar
+            Constraint::Min(5),                                // room list
+            Constraint::Length(3),                             // footer
         ])
         .split(frame.area());
 
@@ -30,6 +32,14 @@ pub fn render(frame: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::BOTTOM));
     frame.render_widget(header, chunks[0]);
 
+    // Error bar
+    if let Some(ref err) = app.status_error {
+        let error = Paragraph::new(err.as_str())
+            .style(Style::default().fg(Color::Red))
+            .alignment(Alignment::Center);
+        frame.render_widget(error, chunks[1]);
+    }
+
     // Room list
     if app.rooms.is_empty() {
         let no_rooms = Paragraph::new(t.get("lobby.no_rooms"))
@@ -40,7 +50,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                     .title(t.get("lobby.rooms"))
                     .borders(Borders::ALL),
             );
-        frame.render_widget(no_rooms, chunks[1]);
+        frame.render_widget(no_rooms, chunks[2]);
     } else {
         let items: Vec<ListItem> = app
             .rooms
@@ -80,7 +90,7 @@ pub fn render(frame: &mut Frame, app: &App) {
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::White)),
         );
-        frame.render_widget(room_list, chunks[1]);
+        frame.render_widget(room_list, chunks[2]);
     }
 
     // Footer
@@ -102,5 +112,5 @@ pub fn render(frame: &mut Frame, app: &App) {
         Span::raw(t.get("app.quit")),
     ]))
     .alignment(Alignment::Center);
-    frame.render_widget(footer, chunks[2]);
+    frame.render_widget(footer, chunks[3]);
 }
