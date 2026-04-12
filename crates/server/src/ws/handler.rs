@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
+use tokio::sync::{RwLock, mpsc};
 use tokio_rustls::server::TlsStream;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{error, info, warn};
@@ -17,11 +19,40 @@ use crate::database::Database;
 use crate::lobby::manager::LobbyManager;
 use crate::ws::session::Session;
 
+/// Registry of connected players for broadcasting messages.
+pub type PlayerRegistry = Arc<RwLock<HashMap<PlayerId, mpsc::UnboundedSender<ServerMsg>>>>;
+
 /// Shared state passed to each connection handler.
 pub struct ServerState {
     pub db: Database,
     pub jwt: JwtManager,
     pub lobby: LobbyManager,
+    pub players: PlayerRegistry,
+}
+
+/// Result of handling a client message: direct response + broadcasts to other players.
+struct HandleResult {
+    /// Message to send back to the requesting client.
+    response: Option<ServerMsg>,
+    /// Messages to broadcast to specific other players.
+    broadcasts: Vec<(PlayerId, ServerMsg)>,
+}
+
+impl HandleResult {
+    fn reply(msg: ServerMsg) -> Self {
+        Self {
+            response: Some(msg),
+            broadcasts: Vec::new(),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn with_broadcasts(response: ServerMsg, broadcasts: Vec<(PlayerId, ServerMsg)>) -> Self {
+        Self {
+            response: Some(response),
+            broadcasts,
+        }
+    }
 }
 
 /// Handle a single WebSocket connection over TLS.
@@ -37,6 +68,9 @@ pub async fn handle_connection(tls_stream: TlsStream<TcpStream>, state: Arc<Serv
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
     let mut session = Session::new();
 
+    // Channel for receiving broadcast messages from other connections
+    let (broadcast_tx, mut broadcast_rx) = mpsc::unbounded_channel::<ServerMsg>();
+
     info!(session_id = %session.session_id, "new connection");
 
     // Send server version as first message
@@ -49,65 +83,107 @@ pub async fn handle_connection(tls_stream: TlsStream<TcpStream>, state: Arc<Serv
         return;
     }
 
-    while let Some(msg_result) = ws_receiver.next().await {
-        let msg = match msg_result {
-            Ok(msg) => msg,
-            Err(e) => {
-                warn!(session_id = %session.session_id, "connection error: {e}");
-                break;
-            }
-        };
-
-        match msg {
-            Message::Binary(data) => {
-                let envelope: Envelope<ClientMsg> = match codec::decode(&data) {
-                    Ok(e) => e,
+    loop {
+        tokio::select! {
+            // Incoming WebSocket message from this client
+            msg_result = ws_receiver.next() => {
+                let Some(msg_result) = msg_result else { break };
+                let msg = match msg_result {
+                    Ok(msg) => msg,
                     Err(e) => {
-                        warn!("bad message: {e}");
-                        continue;
+                        warn!(session_id = %session.session_id, "connection error: {e}");
+                        break;
                     }
                 };
 
-                if envelope.version < MIN_CLIENT_VERSION {
-                    let _ = send_msg(
-                        &mut ws_sender,
-                        &mut session,
-                        &ServerMsg::Error {
-                            code: 426,
-                            message: format!(
-                                "protocol version {} too old, minimum is {}",
-                                envelope.version, MIN_CLIENT_VERSION
-                            ),
-                        },
-                    )
-                    .await;
-                    break;
+                match msg {
+                    Message::Binary(data) => {
+                        let envelope: Envelope<ClientMsg> = match codec::decode(&data) {
+                            Ok(e) => e,
+                            Err(e) => {
+                                warn!("bad message: {e}");
+                                continue;
+                            }
+                        };
+
+                        if envelope.version < MIN_CLIENT_VERSION {
+                            let _ = send_msg(
+                                &mut ws_sender,
+                                &mut session,
+                                &ServerMsg::Error {
+                                    code: 426,
+                                    message: format!(
+                                        "protocol version {} too old, minimum is {}",
+                                        envelope.version, MIN_CLIENT_VERSION
+                                    ),
+                                },
+                            )
+                            .await;
+                            break;
+                        }
+
+                        let result = handle_client_msg(
+                            &envelope.payload,
+                            &mut session,
+                            &state,
+                            &broadcast_tx,
+                        )
+                        .await;
+
+                        // Send direct response to this client
+                        if let Some(resp) = result.response
+                            && let Err(e) = send_msg(&mut ws_sender, &mut session, &resp).await
+                        {
+                            error!("send error: {e}");
+                            break;
+                        }
+
+                        // Send broadcasts to other players
+                        for (target_id, msg) in result.broadcasts {
+                            let players = state.players.read().await;
+                            if let Some(tx) = players.get(&target_id) {
+                                let _ = tx.send(msg);
+                            }
+                        }
+                    }
+                    Message::Ping(data) => {
+                        let _ = ws_sender.send(Message::Pong(data)).await;
+                    }
+                    Message::Close(_) => break,
+                    _ => {}
                 }
 
-                let response = handle_client_msg(&envelope.payload, &mut session, &state).await;
-
-                if let Some(resp) = response
-                    && let Err(e) = send_msg(&mut ws_sender, &mut session, &resp).await
-                {
-                    error!("send error: {e}");
+                session.touch();
+            }
+            // Broadcast message from another connection
+            Some(msg) = broadcast_rx.recv() => {
+                if let Err(e) = send_msg(&mut ws_sender, &mut session, &msg).await {
+                    error!("broadcast send error: {e}");
                     break;
                 }
             }
-            Message::Ping(data) => {
-                let _ = ws_sender.send(Message::Pong(data)).await;
-            }
-            Message::Close(_) => break,
-            _ => {}
         }
-
-        session.touch();
     }
 
-    // Clean up: remove player from room on disconnect
-    if let Some(player_id) = session.player_id
-        && let Some((room_id, _)) = state.lobby.leave_room(player_id).await
-    {
-        info!(%room_id, %player_id, "player removed from room on disconnect");
+    // Clean up: unregister from player registry
+    if let Some(player_id) = session.player_id {
+        state.players.write().await.remove(&player_id);
+
+        // Remove from room and notify remaining players
+        if let Some((room_id, _)) = state.lobby.leave_room(player_id).await {
+            info!(%room_id, %player_id, "player removed from room on disconnect");
+
+            // Notify remaining room members
+            if let Some(room_players) = state.lobby.get_room_players(room_id).await {
+                let leave_msg = ServerMsg::PlayerLeft(player_id);
+                let players = state.players.read().await;
+                for p in &room_players {
+                    if let Some(tx) = players.get(&p.id) {
+                        let _ = tx.send(leave_msg.clone());
+                    }
+                }
+            }
+        }
     }
 
     info!(session_id = %session.session_id, "connection closed");
@@ -117,24 +193,68 @@ async fn handle_client_msg(
     msg: &ClientMsg,
     session: &mut Session,
     state: &ServerState,
-) -> Option<ServerMsg> {
+    broadcast_tx: &mpsc::UnboundedSender<ServerMsg>,
+) -> HandleResult {
     match msg {
         ClientMsg::Register { username, password } => {
-            handle_register(username, password, state).await
+            let resp = handle_register(username, password, state).await;
+            // Register in player registry on successful auth
+            if let Some(ServerMsg::AuthOk { .. }) = &resp
+                && let Some(pid) = session.player_id
+            {
+                state
+                    .players
+                    .write()
+                    .await
+                    .insert(pid, broadcast_tx.clone());
+            }
+            HandleResult {
+                response: resp,
+                broadcasts: Vec::new(),
+            }
         }
         ClientMsg::Login { username, password } => {
-            handle_login(username, password, session, state).await
+            let resp = handle_login(username, password, session, state).await;
+            // Register in player registry on successful auth
+            if let Some(ServerMsg::AuthOk { .. }) = &resp
+                && let Some(pid) = session.player_id
+            {
+                state
+                    .players
+                    .write()
+                    .await
+                    .insert(pid, broadcast_tx.clone());
+            }
+            HandleResult {
+                response: resp,
+                broadcasts: Vec::new(),
+            }
         }
-        ClientMsg::Authenticate { token } => handle_authenticate(token, session, state),
-        ClientMsg::Ping => Some(ServerMsg::Pong),
+        ClientMsg::Authenticate { token } => {
+            let resp = handle_authenticate(token, session, state);
+            if let Some(ServerMsg::AuthOk { .. }) = &resp
+                && let Some(pid) = session.player_id
+            {
+                state
+                    .players
+                    .write()
+                    .await
+                    .insert(pid, broadcast_tx.clone());
+            }
+            HandleResult {
+                response: resp,
+                broadcasts: Vec::new(),
+            }
+        }
+        ClientMsg::Ping => HandleResult::reply(ServerMsg::Pong),
         ClientMsg::ListRooms => {
             if !session.authenticated {
-                return Some(ServerMsg::AuthFail {
+                return HandleResult::reply(ServerMsg::AuthFail {
                     reason: "not authenticated".to_string(),
                 });
             }
             let rooms = state.lobby.list_rooms().await;
-            Some(ServerMsg::RoomList(rooms))
+            HandleResult::reply(ServerMsg::RoomList(rooms))
         }
         ClientMsg::CreateRoom {
             game_type,
@@ -143,7 +263,7 @@ async fn handle_client_msg(
             let player_id = match session.player_id {
                 Some(id) => id,
                 None => {
-                    return Some(ServerMsg::AuthFail {
+                    return HandleResult::reply(ServerMsg::AuthFail {
                         reason: "not authenticated".to_string(),
                     });
                 }
@@ -164,13 +284,13 @@ async fn handle_client_msg(
                         .get_room_players(room_id)
                         .await
                         .unwrap_or_default();
-                    Some(ServerMsg::RoomJoined {
+                    HandleResult::reply(ServerMsg::RoomJoined {
                         room_id,
                         players,
                         state: gc_shared::types::RoomState::Waiting,
                     })
                 }
-                Err(reason) => Some(ServerMsg::Error {
+                Err(reason) => HandleResult::reply(ServerMsg::Error {
                     code: 400,
                     message: reason,
                 }),
@@ -180,25 +300,44 @@ async fn handle_client_msg(
             let player_id = match session.player_id {
                 Some(id) => id,
                 None => {
-                    return Some(ServerMsg::AuthFail {
+                    return HandleResult::reply(ServerMsg::AuthFail {
                         reason: "not authenticated".to_string(),
                     });
                 }
             };
-            let player = PlayerInfo {
+            let joiner = PlayerInfo {
                 id: player_id,
                 username: session.username.clone().unwrap_or_default(),
             };
-            match state.lobby.join_room(*room_id, player).await {
-                Ok(players) => {
+
+            // Get existing players BEFORE joining (to know who to notify)
+            let existing_players = state
+                .lobby
+                .get_room_players(*room_id)
+                .await
+                .unwrap_or_default();
+
+            match state.lobby.join_room(*room_id, joiner.clone()).await {
+                Ok(all_players) => {
                     session.current_room = Some(*room_id);
-                    Some(ServerMsg::RoomJoined {
-                        room_id: *room_id,
-                        players,
-                        state: gc_shared::types::RoomState::Waiting,
-                    })
+
+                    // Broadcast PlayerJoined to all existing players in the room
+                    let broadcasts: Vec<(PlayerId, ServerMsg)> = existing_players
+                        .iter()
+                        .filter(|p| p.id != player_id)
+                        .map(|p| (p.id, ServerMsg::PlayerJoined(joiner.clone())))
+                        .collect();
+
+                    HandleResult {
+                        response: Some(ServerMsg::RoomJoined {
+                            room_id: *room_id,
+                            players: all_players,
+                            state: gc_shared::types::RoomState::Waiting,
+                        }),
+                        broadcasts,
+                    }
                 }
-                Err(reason) => Some(ServerMsg::Error {
+                Err(reason) => HandleResult::reply(ServerMsg::Error {
                     code: 400,
                     message: reason,
                 }),
@@ -208,16 +347,35 @@ async fn handle_client_msg(
             let player_id = match session.player_id {
                 Some(id) => id,
                 None => {
-                    return Some(ServerMsg::AuthFail {
+                    return HandleResult::reply(ServerMsg::AuthFail {
                         reason: "not authenticated".to_string(),
                     });
                 }
             };
-            session.current_room = None;
-            if let Some((_room_id, _is_empty)) = state.lobby.leave_room(player_id).await {
-                Some(ServerMsg::RoomList(state.lobby.list_rooms().await))
+
+            // Get room players BEFORE leaving (to know who to notify)
+            let room_id = session.current_room;
+            let room_players = if let Some(rid) = room_id {
+                state.lobby.get_room_players(rid).await.unwrap_or_default()
             } else {
-                Some(ServerMsg::Error {
+                Vec::new()
+            };
+
+            session.current_room = None;
+            if let Some((_rid, _is_empty)) = state.lobby.leave_room(player_id).await {
+                // Broadcast PlayerLeft to remaining room members
+                let broadcasts: Vec<(PlayerId, ServerMsg)> = room_players
+                    .iter()
+                    .filter(|p| p.id != player_id)
+                    .map(|p| (p.id, ServerMsg::PlayerLeft(player_id)))
+                    .collect();
+
+                HandleResult {
+                    response: Some(ServerMsg::RoomList(state.lobby.list_rooms().await)),
+                    broadcasts,
+                }
+            } else {
+                HandleResult::reply(ServerMsg::Error {
                     code: 400,
                     message: "not in a room".to_string(),
                 })
@@ -225,11 +383,11 @@ async fn handle_client_msg(
         }
         _ => {
             if !session.authenticated {
-                Some(ServerMsg::AuthFail {
+                HandleResult::reply(ServerMsg::AuthFail {
                     reason: "not authenticated".to_string(),
                 })
             } else {
-                Some(ServerMsg::Error {
+                HandleResult::reply(ServerMsg::Error {
                     code: 501,
                     message: "not yet implemented".to_string(),
                 })
@@ -245,7 +403,6 @@ async fn handle_register(username: &str, password: &str, state: &ServerState) ->
         });
     }
 
-    // Hash password (CPU-intensive, must not block async runtime)
     let pw = password.to_string();
     let password_hash = match tokio::task::spawn_blocking(move || hash_password(&pw)).await {
         Ok(Ok(h)) => h,
@@ -338,7 +495,6 @@ async fn handle_login(
         }
     };
 
-    // Verify password (CPU-intensive, must not block async runtime)
     let pw = password.to_string();
     let hash = stored_hash.clone();
     let valid = tokio::task::spawn_blocking(move || verify_password(&pw, &hash))
