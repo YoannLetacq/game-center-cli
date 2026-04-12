@@ -1,0 +1,15 @@
+bind_addr = "0.0.0.0:8443"
+log_level = "info"
+
+[tls]
+cert_path = "certs/server.crt"
+key_path = "certs/server.key"
+
+[auth]
+# Name of the environment variable containing the JWT signing secret.
+# NEVER put the actual secret here — set it in your environment.
+jwt_secret_env = "GC_JWT_SECRET"
+token_expiry_secs = 604800  # 7 days
+
+[database]
+path = "gamecenter.db"
