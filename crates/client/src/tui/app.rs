@@ -1,7 +1,8 @@
-use gc_shared::game::tictactoe::TicTacToeState;
+use gc_shared::game::tictactoe::{self, TicTacToe, TicTacToeState};
+use gc_shared::game::traits::GameEngine;
 use gc_shared::i18n::{Language, Translator};
 use gc_shared::protocol::messages::RoomSummary;
-use gc_shared::types::{GameOutcome, PlayerId, PlayerInfo, RoomId};
+use gc_shared::types::{Difficulty, GameOutcome, GameSettings, PlayerId, PlayerInfo, RoomId};
 
 use crate::database::ClientDatabase;
 
@@ -19,6 +20,15 @@ pub enum Screen {
 pub enum LoginMode {
     Login,
     Register,
+}
+
+/// Whether we're playing locally or online.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GameMode {
+    /// Playing against the server (multiplayer).
+    Online,
+    /// Playing locally against a bot.
+    Solo { difficulty: Difficulty },
 }
 
 /// Application state for the TUI.
@@ -50,6 +60,7 @@ pub struct App {
     pub current_room_players: Vec<PlayerInfo>,
 
     // Game state
+    pub game_mode: GameMode,
     pub game_state: Option<TicTacToeState>,
     pub cursor_row: u8,
     pub cursor_col: u8,
@@ -89,6 +100,7 @@ impl App {
             selected_room: 0,
             current_room_id: None,
             current_room_players: Vec::new(),
+            game_mode: GameMode::Online,
             game_state: None,
             cursor_row: 1,
             cursor_col: 1,
@@ -197,6 +209,73 @@ impl App {
     /// Called when game is over.
     pub fn on_game_over(&mut self, outcome: GameOutcome) {
         self.game_over = Some(outcome);
+    }
+
+    /// Start a local solo game against the bot.
+    pub fn start_solo_game(&mut self, difficulty: Difficulty) {
+        let player_id = self.my_player_id.unwrap_or_else(|| {
+            let id = PlayerId::new();
+            self.my_player_id = Some(id);
+            id
+        });
+        let bot_id = PlayerId::new();
+
+        let state = TicTacToe::initial_state(&[player_id, bot_id], &GameSettings::default());
+        self.game_mode = GameMode::Solo { difficulty };
+        self.game_state = Some(state);
+        self.game_over = None;
+        self.cursor_row = 1;
+        self.cursor_col = 1;
+        self.screen = Screen::InGame;
+    }
+
+    /// Apply a player's move in solo mode, then let the bot respond.
+    pub fn play_solo_move(&mut self, row: u8, col: u8) {
+        let difficulty = match &self.game_mode {
+            GameMode::Solo { difficulty } => *difficulty,
+            _ => return,
+        };
+
+        let state = match self.game_state.as_mut() {
+            Some(s) => s,
+            None => return,
+        };
+
+        let player_id = match self.my_player_id {
+            Some(id) => id,
+            None => return,
+        };
+
+        // Validate and apply player's move
+        let mv = gc_shared::game::tictactoe::TicTacToeMove { row, col };
+        if TicTacToe::validate_move(state, player_id, &mv).is_err() {
+            return;
+        }
+        TicTacToe::apply_move(state, player_id, &mv);
+
+        // Check if game ended after player's move
+        if let Some(outcome) = TicTacToe::is_terminal(state) {
+            self.game_over = Some(outcome);
+            return;
+        }
+
+        // Bot's turn
+        let bot_mv = tictactoe::bot_move(state, difficulty);
+        let bot_id = TicTacToe::current_player(state);
+        TicTacToe::apply_move(state, bot_id, &bot_mv);
+
+        // Check if game ended after bot's move
+        if let Some(outcome) = TicTacToe::is_terminal(state) {
+            self.game_over = Some(outcome);
+        }
+    }
+
+    /// Leave a solo game and return to lobby.
+    pub fn leave_solo_game(&mut self) {
+        self.game_mode = GameMode::Online;
+        self.game_state = None;
+        self.game_over = None;
+        self.screen = Screen::Lobby;
     }
 
     /// Called when a player joins our room.
@@ -313,5 +392,35 @@ mod tests {
         app.on_room_left();
         assert_eq!(app.screen, Screen::Lobby);
         assert!(app.current_room_id.is_none());
+    }
+
+    #[test]
+    fn solo_game_starts() {
+        let mut app = test_app();
+        app.start_solo_game(Difficulty::Hard);
+        assert_eq!(app.screen, Screen::InGame);
+        assert!(app.game_state.is_some());
+        assert!(matches!(app.game_mode, GameMode::Solo { .. }));
+    }
+
+    #[test]
+    fn solo_move_applies_and_bot_responds() {
+        let mut app = test_app();
+        app.start_solo_game(Difficulty::Easy);
+        // Player places at (0,0)
+        app.play_solo_move(0, 0);
+        let state = app.game_state.as_ref().unwrap();
+        // Player's move + bot's response = 2 moves
+        assert_eq!(state.move_count, 2);
+    }
+
+    #[test]
+    fn leave_solo_game() {
+        let mut app = test_app();
+        app.start_solo_game(Difficulty::Hard);
+        app.leave_solo_game();
+        assert_eq!(app.screen, Screen::Lobby);
+        assert!(app.game_state.is_none());
+        assert_eq!(app.game_mode, GameMode::Online);
     }
 }

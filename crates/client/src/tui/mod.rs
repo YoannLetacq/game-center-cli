@@ -13,7 +13,7 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use app::{App, LoginField, LoginMode, Screen};
+use app::{App, GameMode, LoginField, LoginMode, Screen};
 use event::{Event, EventHandler};
 
 use crate::net::client::{NetCommand, NetEvent, NetworkClient};
@@ -130,6 +130,10 @@ fn handle_net_event(app: &mut App, event: NetEvent, net: &NetworkClient) {
 fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, net: &NetworkClient) {
     if code == KeyCode::Esc {
         match app.screen {
+            Screen::InGame if app.game_mode != GameMode::Online => {
+                app.leave_solo_game();
+                return;
+            }
             Screen::Room | Screen::InGame => {
                 let _ = net.send(NetCommand::LeaveRoom);
                 app.on_room_left();
@@ -217,6 +221,10 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                 settings: gc_shared::types::GameSettings::default(),
             });
         }
+        KeyCode::Char('b') | KeyCode::Char('B') => {
+            // Start solo game vs Hard bot
+            app.start_solo_game(gc_shared::types::Difficulty::Hard);
+        }
         KeyCode::Up => {
             if app.selected_room > 0 {
                 app.selected_room -= 1;
@@ -269,12 +277,19 @@ fn handle_game_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         }
         KeyCode::Enter => {
             if is_our_turn {
-                let mv = gc_shared::game::tictactoe::TicTacToeMove {
-                    row: app.cursor_row,
-                    col: app.cursor_col,
-                };
-                if let Ok(data) = gc_shared::protocol::codec::encode(&mv) {
-                    let _ = net.send(NetCommand::GameAction { data });
+                match &app.game_mode {
+                    GameMode::Solo { .. } => {
+                        app.play_solo_move(app.cursor_row, app.cursor_col);
+                    }
+                    GameMode::Online => {
+                        let mv = gc_shared::game::tictactoe::TicTacToeMove {
+                            row: app.cursor_row,
+                            col: app.cursor_col,
+                        };
+                        if let Ok(data) = gc_shared::protocol::codec::encode(&mv) {
+                            let _ = net.send(NetCommand::GameAction { data });
+                        }
+                    }
                 }
             }
         }

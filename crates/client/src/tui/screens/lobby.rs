@@ -95,6 +95,8 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // Footer
     let footer = Paragraph::new(Line::from(vec![
+        Span::styled("B", Style::default().fg(Color::Magenta)),
+        Span::raw(": vs Bot  "),
         Span::styled("C", Style::default().fg(Color::Green)),
         Span::raw(": "),
         Span::raw(t.get("lobby.create_room")),
