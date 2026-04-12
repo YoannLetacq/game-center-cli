@@ -1,2 +1,3 @@
-#[allow(dead_code)] // Used in later phases (TUI networking)
+pub mod client;
+#[allow(dead_code)]
 pub mod connection;

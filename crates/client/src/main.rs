@@ -30,7 +30,7 @@ fn main() {
     };
 
     // Create app and run TUI
-    let app = tui::app::App::new(language, db);
+    let app = tui::app::App::new(language, db, config.server_url.clone());
 
     if let Err(e) = tui::run(app) {
         eprintln!("TUI error: {e}");
