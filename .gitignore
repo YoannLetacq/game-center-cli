@@ -5,3 +5,6 @@
 certs/
 .env
 .env.*
+server.toml
+*.db-shm
+*.db-wal

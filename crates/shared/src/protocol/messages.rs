@@ -49,8 +49,12 @@ pub enum ClientMsg {
 /// Messages sent from server to client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerMsg {
-    /// Authentication succeeded. Contains a JWT and its expiry (unix timestamp).
-    AuthOk { token: String, expires_at: i64 },
+    /// Authentication succeeded.
+    AuthOk {
+        token: String,
+        expires_at: i64,
+        player_id: crate::types::PlayerId,
+    },
     /// Authentication failed.
     AuthFail { reason: String },
     /// List of available rooms.

@@ -1,2 +1,1 @@
 pub mod tictactoe;
-pub mod traits;

@@ -8,6 +8,8 @@ use tracing::info;
 use gc_shared::protocol::messages::RoomSummary;
 use gc_shared::types::{GameSettings, GameType, PlayerId, PlayerInfo, RoomId};
 
+use crate::engine::turn_based::TurnBasedGame;
+
 use super::room::Room;
 
 /// Room cleanup timeout: rooms with no players are removed after this duration.
@@ -18,6 +20,8 @@ pub struct LobbyManager {
     rooms: Arc<RwLock<HashMap<RoomId, Room>>>,
     /// Tracks which room each player is in.
     player_rooms: Arc<RwLock<HashMap<PlayerId, RoomId>>>,
+    /// Active games indexed by room ID.
+    pub games: Arc<RwLock<HashMap<RoomId, TurnBasedGame>>>,
 }
 
 #[allow(dead_code)]
@@ -26,6 +30,7 @@ impl LobbyManager {
         Self {
             rooms: Arc::new(RwLock::new(HashMap::new())),
             player_rooms: Arc::new(RwLock::new(HashMap::new())),
+            games: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -90,8 +95,40 @@ impl LobbyManager {
             pr.insert(player_id, room_id);
         }
 
+        // Auto-start game if room is full
+        let is_full = {
+            let rooms = self.rooms.read().await;
+            rooms.get(&room_id).is_some_and(|r| r.is_full())
+        };
+        if is_full {
+            self.start_game(room_id).await;
+        }
+
         info!(%room_id, %player_id, "player joined room");
         Ok(players)
+    }
+
+    /// Start a game in a room.
+    pub async fn start_game(&self, room_id: RoomId) {
+        let room_info = {
+            let mut rooms = self.rooms.write().await;
+            rooms.get_mut(&room_id).map(|room| {
+                room.state = gc_shared::types::RoomState::InProgress;
+                (
+                    room.game_type,
+                    room.settings.clone(),
+                    room.players.iter().map(|p| p.id).collect::<Vec<_>>(),
+                )
+            })
+        };
+
+        if let Some((game_type, settings, player_ids)) = room_info
+            && let Some(game) = TurnBasedGame::new(game_type, &player_ids, &settings)
+        {
+            let mut games = self.games.write().await;
+            games.insert(room_id, game);
+            info!(%room_id, ?game_type, "game started");
+        }
     }
 
     /// Leave the current room. Returns the room ID left and whether the room is now empty.
@@ -110,6 +147,14 @@ impl LobbyManager {
                 return None;
             }
         };
+
+        // Clean up game if room empties or player leaves mid-game
+        {
+            let mut games = self.games.write().await;
+            if is_empty {
+                games.remove(&room_id);
+            }
+        }
 
         info!(%room_id, %player_id, is_empty, "player left room");
         Some((room_id, is_empty))
