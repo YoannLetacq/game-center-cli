@@ -1,0 +1,63 @@
+# English translations
+[app]
+title = "Game Center"
+version = "Version {0}"
+quit = "Quit"
+back = "Back"
+confirm = "Confirm"
+cancel = "Cancel"
+
+[login]
+title = "Login"
+username = "Username"
+password = "Password"
+login_button = "Login"
+register_button = "Register"
+switch_to_register = "No account? Register"
+switch_to_login = "Have an account? Login"
+error_empty_username = "Username is required"
+error_short_password = "Password must be at least 8 characters"
+connecting = "Connecting..."
+authenticating = "Authenticating..."
+
+[lobby]
+title = "Lobby"
+rooms = "Rooms"
+create_room = "Create Room"
+join_room = "Join"
+no_rooms = "No rooms available"
+players = "{0}/{1} players"
+refresh = "Refresh"
+
+[profile]
+title = "Profile"
+username = "Username"
+language = "Language"
+match_history = "Match History"
+wins = "Wins"
+losses = "Losses"
+draws = "Draws"
+
+[game]
+your_turn = "Your turn"
+opponent_turn = "Waiting for opponent..."
+you_win = "You win!"
+you_lose = "You lose!"
+draw = "Draw!"
+rematch = "Rematch"
+leave = "Leave game"
+
+[game_names]
+tictactoe = "Tic-Tac-Toe"
+connect4 = "Connect 4"
+checkers = "Checkers"
+chess = "Chess"
+snake = "Snake"
+blockbreaker = "Block Breaker"
+pacman = "Pacman"
+
+[errors]
+connection_failed = "Connection failed"
+auth_failed = "Authentication failed: {0}"
+server_error = "Server error: {0}"
+timeout = "Connection timed out"

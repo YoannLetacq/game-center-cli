@@ -1,0 +1,63 @@
+# Traductions françaises
+[app]
+title = "Centre de Jeux"
+version = "Version {0}"
+quit = "Quitter"
+back = "Retour"
+confirm = "Confirmer"
+cancel = "Annuler"
+
+[login]
+title = "Connexion"
+username = "Nom d'utilisateur"
+password = "Mot de passe"
+login_button = "Se connecter"
+register_button = "S'inscrire"
+switch_to_register = "Pas de compte ? S'inscrire"
+switch_to_login = "Déjà un compte ? Se connecter"
+error_empty_username = "Le nom d'utilisateur est requis"
+error_short_password = "Le mot de passe doit contenir au moins 8 caractères"
+connecting = "Connexion en cours..."
+authenticating = "Authentification..."
+
+[lobby]
+title = "Salon"
+rooms = "Salles"
+create_room = "Créer une salle"
+join_room = "Rejoindre"
+no_rooms = "Aucune salle disponible"
+players = "{0}/{1} joueurs"
+refresh = "Actualiser"
+
+[profile]
+title = "Profil"
+username = "Nom d'utilisateur"
+language = "Langue"
+match_history = "Historique des parties"
+wins = "Victoires"
+losses = "Défaites"
+draws = "Égalités"
+
+[game]
+your_turn = "À votre tour"
+opponent_turn = "En attente de l'adversaire..."
+you_win = "Vous avez gagné !"
+you_lose = "Vous avez perdu !"
+draw = "Égalité !"
+rematch = "Revanche"
+leave = "Quitter la partie"
+
+[game_names]
+tictactoe = "Morpion"
+connect4 = "Puissance 4"
+checkers = "Dames"
+chess = "Échecs"
+snake = "Serpent"
+blockbreaker = "Casse-briques"
+pacman = "Pacman"
+
+[errors]
+connection_failed = "Échec de la connexion"
+auth_failed = "Échec de l'authentification : {0}"
+server_error = "Erreur du serveur : {0}"
+timeout = "Connexion expirée"
