@@ -51,7 +51,20 @@ async fn main() {
 
     let jwt = auth::jwt::JwtManager::new(jwt_secret.as_bytes(), config.auth.token_expiry_secs);
 
-    let state = Arc::new(ServerState { db, jwt });
+    let lobby = lobby::manager::LobbyManager::new();
+    let state = Arc::new(ServerState { db, jwt, lobby });
+
+    // Spawn periodic room cleanup
+    {
+        let state = Arc::clone(&state);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                state.lobby.cleanup_empty_rooms().await;
+            }
+        });
+    }
 
     // Build TLS
     let tls_acceptor = match build_tls_acceptor(&config.tls.cert_path, &config.tls.key_path) {

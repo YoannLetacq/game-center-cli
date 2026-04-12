@@ -1,8 +1,8 @@
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Span;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 
 use crate::tui::app::App;
 
@@ -19,7 +19,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         .split(frame.area());
 
     // Header
-    let header_text = format!("{} - {}", t.get("lobby.title"), app.username_input.as_str());
+    let header_text = format!("{} — {}", t.get("lobby.title"), app.username_input.as_str());
     let header = Paragraph::new(header_text)
         .alignment(Alignment::Center)
         .style(
@@ -30,22 +30,77 @@ pub fn render(frame: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::BOTTOM));
     frame.render_widget(header, chunks[0]);
 
-    // Room list (placeholder for Phase 3)
-    let rooms_block = Block::default()
-        .title(t.get("lobby.rooms"))
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::White));
-    let no_rooms = Paragraph::new(t.get("lobby.no_rooms"))
-        .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::DarkGray))
-        .block(rooms_block);
-    frame.render_widget(no_rooms, chunks[1]);
+    // Room list
+    if app.rooms.is_empty() {
+        let no_rooms = Paragraph::new(t.get("lobby.no_rooms"))
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::DarkGray))
+            .block(
+                Block::default()
+                    .title(t.get("lobby.rooms"))
+                    .borders(Borders::ALL),
+            );
+        frame.render_widget(no_rooms, chunks[1]);
+    } else {
+        let items: Vec<ListItem> = app
+            .rooms
+            .iter()
+            .enumerate()
+            .map(|(i, room)| {
+                let selected = i == app.selected_room;
+                let prefix = if selected { "▸ " } else { "  " };
+                let state_str = match &room.state {
+                    gc_shared::types::RoomState::Waiting => "waiting",
+                    gc_shared::types::RoomState::InProgress => "in progress",
+                    gc_shared::types::RoomState::Finished => "finished",
+                };
+                let text = format!(
+                    "{}{} — {} ({}/{}) [{}]",
+                    prefix,
+                    room.game_type,
+                    room.host_name,
+                    room.player_count,
+                    room.max_players,
+                    state_str,
+                );
+                let style = if selected {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                ListItem::new(text).style(style)
+            })
+            .collect();
+
+        let room_list = List::new(items).block(
+            Block::default()
+                .title(format!("{} ({})", t.get("lobby.rooms"), app.rooms.len()))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::White)),
+        );
+        frame.render_widget(room_list, chunks[1]);
+    }
 
     // Footer
-    let footer = Paragraph::new(Span::styled(
-        "Esc: Quit | C: Create Room | R: Refresh",
-        Style::default().fg(Color::DarkGray),
-    ))
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled("C", Style::default().fg(Color::Green)),
+        Span::raw(": "),
+        Span::raw(t.get("lobby.create_room")),
+        Span::raw("  "),
+        Span::styled("Enter", Style::default().fg(Color::Green)),
+        Span::raw(": "),
+        Span::raw(t.get("lobby.join_room")),
+        Span::raw("  "),
+        Span::styled("R", Style::default().fg(Color::Yellow)),
+        Span::raw(": "),
+        Span::raw(t.get("lobby.refresh")),
+        Span::raw("  "),
+        Span::styled("Esc", Style::default().fg(Color::Red)),
+        Span::raw(": "),
+        Span::raw(t.get("app.quit")),
+    ]))
     .alignment(Alignment::Center);
     frame.render_widget(footer, chunks[2]);
 }

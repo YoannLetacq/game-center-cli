@@ -1,4 +1,6 @@
 use gc_shared::i18n::{Language, Translator};
+use gc_shared::protocol::messages::RoomSummary;
+use gc_shared::types::{PlayerInfo, RoomId};
 
 use crate::database::ClientDatabase;
 
@@ -7,7 +9,7 @@ use crate::database::ClientDatabase;
 pub enum Screen {
     Login,
     Lobby,
-    // Room and InGame will be added in later phases.
+    Room,
 }
 
 /// The mode of the login screen.
@@ -24,6 +26,7 @@ pub struct App {
     pub login_mode: LoginMode,
     pub translator: Translator,
     pub db: ClientDatabase,
+    pub server_url: String,
 
     // Login form state
     pub username_input: String,
@@ -35,6 +38,14 @@ pub struct App {
     // Auth state
     pub authenticated: bool,
     pub auth_token: Option<String>,
+
+    // Lobby state
+    pub rooms: Vec<RoomSummary>,
+    pub selected_room: usize,
+
+    // Room state
+    pub current_room_id: Option<RoomId>,
+    pub current_room_players: Vec<PlayerInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,7 +55,7 @@ pub enum LoginField {
 }
 
 impl App {
-    pub fn new(language: Language, db: ClientDatabase) -> Self {
+    pub fn new(language: Language, db: ClientDatabase, server_url: String) -> Self {
         // Try to restore username from profile
         let username = db.get_profile().unwrap_or(None).unwrap_or_default();
 
@@ -54,6 +65,7 @@ impl App {
             login_mode: LoginMode::Login,
             translator: Translator::new(language),
             db,
+            server_url,
             username_input: username,
             password_input: String::new(),
             active_field: LoginField::Username,
@@ -61,6 +73,10 @@ impl App {
             login_loading: false,
             authenticated: false,
             auth_token: None,
+            rooms: Vec::new(),
+            selected_room: 0,
+            current_room_id: None,
+            current_room_players: Vec::new(),
         }
     }
 
@@ -83,7 +99,7 @@ impl App {
         };
     }
 
-    #[allow(dead_code)] // Used when language toggle is wired in
+    #[allow(dead_code)]
     pub fn set_language(&mut self, lang: Language) {
         self.translator = Translator::new(lang);
     }
@@ -114,17 +130,48 @@ impl App {
         self.login_loading = false;
         self.login_error = None;
         self.password_input.clear();
-        // Save profile
         let _ = self.db.save_profile(&self.username_input);
-        // Transition to lobby
         self.screen = Screen::Lobby;
     }
 
     /// Called when authentication fails.
-    #[allow(dead_code)] // Used when networking is wired in
     pub fn on_auth_failure(&mut self, reason: String) {
         self.login_loading = false;
         self.login_error = Some(reason);
+    }
+
+    /// Update the room list.
+    pub fn update_rooms(&mut self, rooms: Vec<RoomSummary>) {
+        self.rooms = rooms;
+        if self.selected_room >= self.rooms.len() && !self.rooms.is_empty() {
+            self.selected_room = self.rooms.len() - 1;
+        }
+    }
+
+    /// Called when we join a room.
+    pub fn on_room_joined(&mut self, room_id: RoomId, players: Vec<PlayerInfo>) {
+        self.current_room_id = Some(room_id);
+        self.current_room_players = players;
+        self.screen = Screen::Room;
+    }
+
+    /// Called when we leave a room.
+    pub fn on_room_left(&mut self) {
+        self.current_room_id = None;
+        self.current_room_players.clear();
+        self.screen = Screen::Lobby;
+    }
+
+    /// Called when a player joins our room.
+    pub fn on_player_joined(&mut self, player: PlayerInfo) {
+        if !self.current_room_players.iter().any(|p| p.id == player.id) {
+            self.current_room_players.push(player);
+        }
+    }
+
+    /// Called when a player leaves our room.
+    pub fn on_player_left(&mut self, player_id: gc_shared::types::PlayerId) {
+        self.current_room_players.retain(|p| p.id != player_id);
     }
 }
 
@@ -134,7 +181,7 @@ mod tests {
 
     fn test_app() -> App {
         let db = ClientDatabase::open_in_memory().unwrap();
-        App::new(Language::English, db)
+        App::new(Language::English, db, "wss://localhost:8443".to_string())
     }
 
     #[test]
@@ -144,6 +191,7 @@ mod tests {
         assert_eq!(app.screen, Screen::Login);
         assert_eq!(app.login_mode, LoginMode::Login);
         assert!(!app.authenticated);
+        assert!(app.rooms.is_empty());
     }
 
     #[test]
@@ -204,5 +252,29 @@ mod tests {
         assert_eq!(app.translator.get("app.title"), "Game Center");
         app.set_language(Language::French);
         assert_eq!(app.translator.get("app.title"), "Centre de Jeux");
+    }
+
+    #[test]
+    fn room_joined_transitions_to_room_screen() {
+        let mut app = test_app();
+        let room_id = RoomId::new();
+        let players = vec![PlayerInfo {
+            id: gc_shared::types::PlayerId::new(),
+            username: "alice".to_string(),
+        }];
+        app.on_room_joined(room_id, players.clone());
+        assert_eq!(app.screen, Screen::Room);
+        assert_eq!(app.current_room_id, Some(room_id));
+        assert_eq!(app.current_room_players.len(), 1);
+    }
+
+    #[test]
+    fn room_left_transitions_to_lobby() {
+        let mut app = test_app();
+        app.screen = Screen::Room;
+        app.current_room_id = Some(RoomId::new());
+        app.on_room_left();
+        assert_eq!(app.screen, Screen::Lobby);
+        assert!(app.current_room_id.is_none());
     }
 }

@@ -5,7 +5,7 @@ use gc_shared::protocol::messages::ServerMsg;
 use gc_shared::types::{PlayerId, SessionId};
 
 /// Per-connection session state, tracking a player's connection lifecycle.
-#[allow(dead_code)] // Fields/methods used in reconnection (Phase 3)
+#[allow(dead_code)]
 pub struct Session {
     pub session_id: SessionId,
     pub player_id: Option<PlayerId>,
@@ -18,6 +18,8 @@ pub struct Session {
     pub last_active: Instant,
     /// Max messages to buffer for replay.
     max_buffer: usize,
+    /// The room this player is currently in.
+    pub current_room: Option<gc_shared::types::RoomId>,
 }
 
 #[allow(dead_code)]
@@ -32,6 +34,7 @@ impl Session {
             recent_messages: VecDeque::with_capacity(100),
             last_active: Instant::now(),
             max_buffer: 100,
+            current_room: None,
         }
     }
 
