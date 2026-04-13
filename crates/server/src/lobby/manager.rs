@@ -149,7 +149,11 @@ impl LobbyManager {
             let mut rooms = self.rooms.write().await;
             if let Some(room) = rooms.get_mut(&room_id) {
                 room.remove_player(player_id);
-                room.is_empty()
+                let empty = room.is_empty();
+                if empty {
+                    rooms.remove(&room_id);
+                }
+                empty
             } else {
                 return None;
             }

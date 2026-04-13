@@ -99,7 +99,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // Footer
-    let footer = if app.selecting_solo_game {
+    let footer = if app.selecting_solo_game || app.selecting_multiplayer_game {
         Paragraph::new(Line::from(vec![
             Span::styled(
                 "T",

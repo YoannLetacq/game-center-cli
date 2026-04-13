@@ -282,6 +282,41 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         return;
     }
 
+    // Sub-state: multiplayer game selection on lobby screen
+    if app.selecting_multiplayer_game {
+        match code {
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                app.selected_game_type = gc_shared::types::GameType::TicTacToe;
+                app.selecting_multiplayer_game = false;
+
+                let settings = gc_shared::types::GameSettings::default();
+                app.current_game_type = app.selected_game_type;
+                app.current_max_players = settings.max_players;
+                let _ = net.send(NetCommand::CreateRoom {
+                    game_type: app.selected_game_type,
+                    settings,
+                });
+            }
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                app.selected_game_type = gc_shared::types::GameType::Connect4;
+                app.selecting_multiplayer_game = false;
+
+                let settings = gc_shared::types::GameSettings::default();
+                app.current_game_type = app.selected_game_type;
+                app.current_max_players = settings.max_players;
+                let _ = net.send(NetCommand::CreateRoom {
+                    game_type: app.selected_game_type,
+                    settings,
+                });
+            }
+            KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
+                app.selecting_multiplayer_game = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // Sub-state: difficulty selection
     if app.selecting_difficulty {
         match code {
@@ -315,13 +350,7 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
             };
         }
         KeyCode::Char('c') | KeyCode::Char('C') => {
-            let settings = gc_shared::types::GameSettings::default();
-            app.current_game_type = app.selected_game_type;
-            app.current_max_players = settings.max_players;
-            let _ = net.send(NetCommand::CreateRoom {
-                game_type: app.selected_game_type,
-                settings,
-            });
+            app.selecting_multiplayer_game = true;
         }
         KeyCode::Char('b') | KeyCode::Char('B') => {
             app.selecting_solo_game = true;

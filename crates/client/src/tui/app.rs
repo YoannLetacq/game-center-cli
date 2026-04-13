@@ -84,6 +84,9 @@ pub struct App {
     pub selecting_solo_game: bool,
     pub selecting_difficulty: bool,
 
+    // Lobby sub-state: game selection for multiplayer mode
+    pub selecting_multiplayer_game: bool,
+
     // Generic status error (shown on lobby/room screens)
     pub status_error: Option<String>,
 }
@@ -128,6 +131,7 @@ impl App {
             my_player_id: None,
             selecting_solo_game: false,
             selecting_difficulty: false,
+            selecting_multiplayer_game: false,
             status_error: None,
         }
     }
