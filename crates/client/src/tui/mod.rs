@@ -95,7 +95,11 @@ fn handle_net_event(app: &mut App, event: NetEvent, net: &NetworkClient) {
         NetEvent::RoomList(rooms) => {
             app.update_rooms(rooms);
         }
-        NetEvent::RoomJoined { room_id, players } => {
+        NetEvent::RoomJoined {
+            room_id,
+            players,
+            state: _room_state,
+        } => {
             app.on_room_joined(room_id, players);
         }
         NetEvent::GameStateUpdate { state_data } => {
@@ -236,9 +240,12 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
             let _ = net.send(NetCommand::ListRooms);
         }
         KeyCode::Char('c') | KeyCode::Char('C') => {
+            let settings = gc_shared::types::GameSettings::default();
+            app.current_game_type = gc_shared::types::GameType::TicTacToe;
+            app.current_max_players = settings.max_players;
             let _ = net.send(NetCommand::CreateRoom {
                 game_type: gc_shared::types::GameType::TicTacToe,
-                settings: gc_shared::types::GameSettings::default(),
+                settings,
             });
         }
         KeyCode::Char('b') | KeyCode::Char('B') => {
@@ -256,6 +263,8 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         }
         KeyCode::Enter => {
             if let Some(room) = app.rooms.get(app.selected_room) {
+                app.current_game_type = room.game_type;
+                app.current_max_players = room.max_players;
                 let _ = net.send(NetCommand::JoinRoom { room_id: room.id });
             }
         }
