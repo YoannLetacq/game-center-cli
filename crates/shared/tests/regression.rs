@@ -319,7 +319,24 @@ mod protocol_regression {
             ServerMsg::AuthFail {
                 reason: "bad".into(),
             },
-            ServerMsg::RoomList(vec![]),
+            ServerMsg::RoomList(vec![
+                gc_shared::protocol::messages::RoomSummary {
+                    id: RoomId::new(),
+                    game_type: GameType::Connect4,
+                    player_count: 1,
+                    max_players: 2,
+                    state: RoomState::Waiting,
+                    host_name: "u".into(),
+                },
+                gc_shared::protocol::messages::RoomSummary {
+                    id: RoomId::new(),
+                    game_type: GameType::TicTacToe,
+                    player_count: 2,
+                    max_players: 2,
+                    state: RoomState::InProgress,
+                    host_name: "u2".into(),
+                }
+            ]),
             ServerMsg::RoomJoined {
                 room_id: RoomId::new(),
                 players: vec![PlayerInfo {
