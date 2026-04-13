@@ -143,8 +143,23 @@ impl LobbyManager {
         }
     }
 
-    /// Leave the current room. Returns the room ID left and whether the room is now empty.
-    pub async fn leave_room(&self, player_id: PlayerId) -> Option<(RoomId, bool)> {
+    /// Mark a game as finished and clean up its state.
+    pub async fn finish_game(&self, room_id: RoomId) {
+        {
+            let mut games = self.games.write().await;
+            games.remove(&room_id);
+        }
+        {
+            let mut rooms = self.rooms.write().await;
+            if let Some(room) = rooms.get_mut(&room_id) {
+                room.state = gc_shared::types::RoomState::Finished;
+            }
+        }
+        info!(%room_id, "game finished and state cleaned up");
+    }
+
+    /// Leave the current room. Returns the room ID left, whether the room is empty, and whether a game was aborted.
+    pub async fn leave_room(&self, player_id: PlayerId) -> Option<(RoomId, bool, bool)> {
         let room_id = {
             let mut pr = self.player_rooms.write().await;
             pr.remove(&player_id)?
@@ -164,16 +179,27 @@ impl LobbyManager {
             }
         };
 
+        let mut game_aborted = false;
         // Clean up game if room empties or player leaves mid-game
         {
             let mut games = self.games.write().await;
             if is_empty {
                 games.remove(&room_id);
+            } else if games.contains_key(&room_id) {
+                games.remove(&room_id);
+                game_aborted = true;
             }
         }
 
-        info!(%room_id, %player_id, is_empty, "player left room");
-        Some((room_id, is_empty))
+        if game_aborted {
+            let mut rooms = self.rooms.write().await;
+            if let Some(room) = rooms.get_mut(&room_id) {
+                room.state = gc_shared::types::RoomState::Waiting;
+            }
+        }
+
+        info!(%room_id, %player_id, is_empty, game_aborted, "player left room");
+        Some((room_id, is_empty, game_aborted))
     }
 
     /// Get the list of rooms as summaries for the lobby screen.
@@ -334,7 +360,7 @@ mod tests {
         lobby.join_room(room_id, guest).await.unwrap();
 
         let result = lobby.leave_room(host_id).await;
-        assert_eq!(result, Some((room_id, false))); // not empty, bob still there
+        assert_eq!(result, Some((room_id, false, true))); // not empty, bob still there, game aborted
 
         let rooms = lobby.list_rooms().await;
         assert_eq!(rooms[0].player_count, 1);
@@ -352,7 +378,7 @@ mod tests {
             .unwrap();
 
         let result = lobby.leave_room(host_id).await;
-        assert_eq!(result, Some((room_id, true))); // empty now
+        assert_eq!(result, Some((room_id, true, false))); // empty now
     }
 
     #[tokio::test]
