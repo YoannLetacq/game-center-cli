@@ -335,7 +335,7 @@ mod protocol_regression {
                     max_players: 2,
                     state: RoomState::InProgress,
                     host_name: "u2".into(),
-                }
+                },
             ]),
             ServerMsg::RoomJoined {
                 room_id: RoomId::new(),
