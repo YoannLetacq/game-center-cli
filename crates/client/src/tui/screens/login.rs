@@ -34,11 +34,40 @@ pub fn render(frame: &mut Frame, app: &App) {
     render_form(frame, app, form_area);
 
     // Footer
-    if app.selecting_difficulty {
+    if app.selecting_solo_game {
         let footer = Paragraph::new(Line::from(vec![
-            Span::styled("E", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "T",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(": TicTacToe | "),
+            Span::styled(
+                "C",
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(": Connect4 | "),
+            Span::styled("Esc", Style::default().fg(Color::Yellow)),
+            Span::raw(": Cancel"),
+        ]))
+        .alignment(Alignment::Center);
+        frame.render_widget(footer, chunks[2]);
+    } else if app.selecting_difficulty {
+        let footer = Paragraph::new(Line::from(vec![
+            Span::styled(
+                "E",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(": Easy | "),
-            Span::styled("H", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "H",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
             Span::raw(": Hard | "),
             Span::styled("B", Style::default().fg(Color::Yellow)),
             Span::raw(": "),

@@ -81,6 +81,7 @@ pub struct App {
     pub my_player_id: Option<PlayerId>,
 
     // Lobby sub-state: difficulty selection for solo mode
+    pub selecting_solo_game: bool,
     pub selecting_difficulty: bool,
 
     // Generic status error (shown on lobby/room screens)
@@ -125,6 +126,7 @@ impl App {
             cursor_col: 1,
             game_over: None,
             my_player_id: None,
+            selecting_solo_game: false,
             selecting_difficulty: false,
             status_error: None,
         }

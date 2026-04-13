@@ -171,6 +171,27 @@ fn handle_login_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         return;
     }
 
+    // Sub-state: solo game selection on login screen
+    if app.selecting_solo_game {
+        match code {
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                app.selected_game_type = gc_shared::types::GameType::TicTacToe;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                app.selected_game_type = gc_shared::types::GameType::Connect4;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
+            KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
+                app.selecting_solo_game = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // Sub-state: solo difficulty selection on login screen
     if app.selecting_difficulty {
         match code {
@@ -194,7 +215,7 @@ fn handle_login_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         KeyCode::Tab => app.toggle_field(),
         KeyCode::F(2) => app.toggle_login_mode(),
         KeyCode::F(3) => {
-            app.selecting_difficulty = true;
+            app.selecting_solo_game = true;
         }
         KeyCode::Enter => {
             if let Some(err) = app.validate_login_form() {
@@ -240,6 +261,27 @@ fn handle_login_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
 fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
     app.status_error = None; // Clear error on any key press
 
+    // Sub-state: solo game selection on lobby screen
+    if app.selecting_solo_game {
+        match code {
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                app.selected_game_type = gc_shared::types::GameType::TicTacToe;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                app.selected_game_type = gc_shared::types::GameType::Connect4;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
+            KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
+                app.selecting_solo_game = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // Sub-state: difficulty selection
     if app.selecting_difficulty {
         match code {
@@ -282,7 +324,7 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
             });
         }
         KeyCode::Char('b') | KeyCode::Char('B') => {
-            app.selecting_difficulty = true;
+            app.selecting_solo_game = true;
         }
         KeyCode::Up => {
             if app.selected_room > 0 {
