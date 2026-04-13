@@ -48,6 +48,11 @@ impl LobbyManager {
             return Err(format!("{game_type} is not yet available"));
         }
 
+        // Validate max_players
+        if settings.max_players != 2 {
+            return Err("This game requires exactly 2 players".to_string());
+        }
+
         let host_id = host.id;
 
         // Check if player is already in a room

@@ -237,6 +237,14 @@ impl App {
             self.game_state = Some(state);
             if self.screen == Screen::Room {
                 self.screen = Screen::InGame;
+                self.cursor_row = match self.selected_game_type {
+                    GameType::Connect4 => 0, // cursor not used for row in Connect4
+                    _ => 1,
+                };
+                self.cursor_col = match self.selected_game_type {
+                    GameType::Connect4 => 3, // center column
+                    _ => 1,
+                };
             }
         }
     }
