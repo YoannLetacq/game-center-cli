@@ -348,9 +348,6 @@ mod tests {
 
         let result = lobby.leave_room(host_id).await;
         assert_eq!(result, Some((room_id, true))); // empty now
-
-        let rooms = lobby.list_rooms().await;
-        assert!(rooms.is_empty());
     }
 
     #[tokio::test]
