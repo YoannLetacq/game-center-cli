@@ -2,7 +2,9 @@ use gc_shared::game::tictactoe::{self, TicTacToe, TicTacToeState};
 use gc_shared::game::traits::GameEngine;
 use gc_shared::i18n::{Language, Translator};
 use gc_shared::protocol::messages::RoomSummary;
-use gc_shared::types::{Difficulty, GameOutcome, GameSettings, PlayerId, PlayerInfo, RoomId};
+use gc_shared::types::{
+    Difficulty, GameOutcome, GameSettings, GameType, PlayerId, PlayerInfo, RoomId,
+};
 
 use crate::database::ClientDatabase;
 
@@ -58,6 +60,8 @@ pub struct App {
     // Room state
     pub current_room_id: Option<RoomId>,
     pub current_room_players: Vec<PlayerInfo>,
+    pub current_game_type: GameType,
+    pub current_max_players: u8,
 
     // Game state
     pub game_mode: GameMode,
@@ -103,6 +107,8 @@ impl App {
             selected_room: 0,
             current_room_id: None,
             current_room_players: Vec::new(),
+            current_game_type: GameType::TicTacToe,
+            current_max_players: 2,
             game_mode: GameMode::Online,
             game_state: None,
             cursor_row: 1,
@@ -212,7 +218,16 @@ impl App {
 
     /// Called when game is over.
     pub fn on_game_over(&mut self, outcome: GameOutcome) {
-        self.game_over = Some(outcome);
+        self.game_over = Some(outcome.clone());
+
+        // Record match history
+        let result_str = match &outcome {
+            GameOutcome::Win(pid) if Some(*pid) == self.my_player_id => "win",
+            GameOutcome::Win(_) => "loss",
+            GameOutcome::Draw => "draw",
+        };
+        let game_type_str = format!("{}", self.current_game_type);
+        let _ = self.db.record_match(&game_type_str, None, result_str);
     }
 
     /// Start a local solo game against the bot.

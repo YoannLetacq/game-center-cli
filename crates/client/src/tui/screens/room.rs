@@ -18,9 +18,9 @@ pub fn render(frame: &mut Frame, app: &App) {
         ])
         .split(frame.area());
 
-    // Header — room info
+    // Header — room info with game type
     let room_title = match app.current_room_id {
-        Some(id) => format!("Room {}", &id.to_string()[..8]),
+        Some(id) => format!("{} — Room {}", app.current_game_type, &id.to_string()[..8]),
         None => "Room".to_string(),
     };
     let header = Paragraph::new(room_title)
@@ -49,7 +49,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         "{} ({}/{})",
         t.get("lobby.rooms"),
         app.current_room_players.len(),
-        2 // default max for now
+        app.current_max_players,
     );
 
     let player_list = List::new(items).block(

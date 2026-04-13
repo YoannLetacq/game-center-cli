@@ -16,6 +16,8 @@ use super::room::Room;
 const EMPTY_ROOM_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Manages all active game rooms.
+///
+/// Only game types supported by [`TurnBasedGame::is_supported`] can be created.
 pub struct LobbyManager {
     rooms: Arc<RwLock<HashMap<RoomId, Room>>>,
     /// Tracks which room each player is in.
@@ -41,6 +43,11 @@ impl LobbyManager {
         settings: GameSettings,
         host: PlayerInfo,
     ) -> Result<RoomId, String> {
+        // Reject unsupported game types
+        if !TurnBasedGame::is_supported(game_type) {
+            return Err(format!("{game_type} is not yet available"));
+        }
+
         let host_id = host.id;
 
         // Check if player is already in a room
@@ -264,7 +271,7 @@ mod tests {
         let guest = make_player("bob");
 
         let room_id = lobby
-            .create_room(GameType::Chess, GameSettings::default(), host)
+            .create_room(GameType::TicTacToe, GameSettings::default(), host)
             .await
             .unwrap();
 
@@ -331,7 +338,7 @@ mod tests {
         let host_id = host.id;
 
         let room_id = lobby
-            .create_room(GameType::Snake, GameSettings::default(), host)
+            .create_room(GameType::TicTacToe, GameSettings::default(), host)
             .await
             .unwrap();
 
@@ -356,5 +363,17 @@ mod tests {
 
         lobby.leave_room(host_id).await;
         assert!(lobby.get_player_room(host_id).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn unsupported_game_type_rejected() {
+        let lobby = LobbyManager::new();
+        let host = make_player("alice");
+
+        let result = lobby
+            .create_room(GameType::Chess, GameSettings::default(), host)
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not yet available"));
     }
 }

@@ -49,6 +49,7 @@ pub enum NetEvent {
     RoomJoined {
         room_id: gc_shared::types::RoomId,
         players: Vec<gc_shared::types::PlayerInfo>,
+        state: gc_shared::types::RoomState,
     },
     PlayerJoined(gc_shared::types::PlayerInfo),
     PlayerLeft(gc_shared::types::PlayerId),
@@ -298,8 +299,14 @@ fn dispatch_server_msg(msg: ServerMsg, event_tx: &std_mpsc::Sender<NetEvent>) {
     let event = match msg {
         ServerMsg::RoomList(rooms) => NetEvent::RoomList(rooms),
         ServerMsg::RoomJoined {
-            room_id, players, ..
-        } => NetEvent::RoomJoined { room_id, players },
+            room_id,
+            players,
+            state,
+        } => NetEvent::RoomJoined {
+            room_id,
+            players,
+            state,
+        },
         ServerMsg::PlayerJoined(info) => NetEvent::PlayerJoined(info),
         ServerMsg::PlayerLeft(id) => NetEvent::PlayerLeft(id),
         ServerMsg::GameStateUpdate { state_data, .. } => NetEvent::GameStateUpdate { state_data },

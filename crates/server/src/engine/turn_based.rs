@@ -19,6 +19,11 @@ pub enum GameState {
 }
 
 impl TurnBasedGame {
+    /// Check if a game type is currently implemented.
+    pub fn is_supported(game_type: GameType) -> bool {
+        matches!(game_type, GameType::TicTacToe)
+    }
+
     /// Create a new game for the given type and players.
     pub fn new(game_type: GameType, players: &[PlayerId], settings: &GameSettings) -> Option<Self> {
         let state = match game_type {
