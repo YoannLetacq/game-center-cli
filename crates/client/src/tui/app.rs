@@ -1,3 +1,4 @@
+use gc_shared::game::connect4::{self, Connect4, Connect4State};
 use gc_shared::game::tictactoe::{self, TicTacToe, TicTacToeState};
 use gc_shared::game::traits::GameEngine;
 use gc_shared::i18n::{Language, Translator};
@@ -33,6 +34,13 @@ pub enum GameMode {
     Solo { difficulty: Difficulty },
 }
 
+/// Client-side game state wrapper supporting multiple game types.
+#[derive(Debug, Clone)]
+pub enum ClientGameState {
+    TicTacToe(TicTacToeState),
+    Connect4(Connect4State),
+}
+
 /// Application state for the TUI.
 pub struct App {
     pub running: bool,
@@ -65,7 +73,8 @@ pub struct App {
 
     // Game state
     pub game_mode: GameMode,
-    pub game_state: Option<TicTacToeState>,
+    pub selected_game_type: GameType,
+    pub game_state: Option<ClientGameState>,
     pub cursor_row: u8,
     pub cursor_col: u8,
     pub game_over: Option<GameOutcome>,
@@ -110,6 +119,7 @@ impl App {
             current_game_type: GameType::TicTacToe,
             current_max_players: 2,
             game_mode: GameMode::Online,
+            selected_game_type: GameType::TicTacToe,
             game_state: None,
             cursor_row: 1,
             cursor_col: 1,
@@ -208,7 +218,16 @@ impl App {
 
     /// Called when game state is received from server.
     pub fn on_game_state(&mut self, state_data: &[u8]) {
-        if let Ok(state) = gc_shared::protocol::codec::decode::<TicTacToeState>(state_data) {
+        let decoded = match self.selected_game_type {
+            GameType::TicTacToe => gc_shared::protocol::codec::decode::<TicTacToeState>(state_data)
+                .ok()
+                .map(ClientGameState::TicTacToe),
+            GameType::Connect4 => gc_shared::protocol::codec::decode::<Connect4State>(state_data)
+                .ok()
+                .map(ClientGameState::Connect4),
+            _ => None,
+        };
+        if let Some(state) = decoded {
             self.game_state = Some(state);
             if self.screen == Screen::Room {
                 self.screen = Screen::InGame;
@@ -238,13 +257,30 @@ impl App {
             id
         });
         let bot_id = PlayerId::new();
+        let players = [player_id, bot_id];
+        let settings = GameSettings::default();
 
-        let state = TicTacToe::initial_state(&[player_id, bot_id], &GameSettings::default());
+        let state = match self.selected_game_type {
+            GameType::TicTacToe => {
+                ClientGameState::TicTacToe(TicTacToe::initial_state(&players, &settings))
+            }
+            GameType::Connect4 => {
+                ClientGameState::Connect4(Connect4::initial_state(&players, &settings))
+            }
+            _ => return,
+        };
+
         self.game_mode = GameMode::Solo { difficulty };
         self.game_state = Some(state);
         self.game_over = None;
-        self.cursor_row = 1;
-        self.cursor_col = 1;
+        self.cursor_row = match self.selected_game_type {
+            GameType::Connect4 => 0, // cursor not used for row in Connect4
+            _ => 1,
+        };
+        self.cursor_col = match self.selected_game_type {
+            GameType::Connect4 => 3, // center column
+            _ => 1,
+        };
         self.screen = Screen::InGame;
     }
 
@@ -265,27 +301,41 @@ impl App {
             None => return,
         };
 
-        // Validate and apply player's move
-        let mv = gc_shared::game::tictactoe::TicTacToeMove { row, col };
-        if TicTacToe::validate_move(state, player_id, &mv).is_err() {
-            return;
-        }
-        TicTacToe::apply_move(state, player_id, &mv);
-
-        // Check if game ended after player's move
-        if let Some(outcome) = TicTacToe::is_terminal(state) {
-            self.game_over = Some(outcome);
-            return;
-        }
-
-        // Bot's turn
-        let bot_mv = tictactoe::bot_move(state, difficulty);
-        let bot_id = TicTacToe::current_player(state);
-        TicTacToe::apply_move(state, bot_id, &bot_mv);
-
-        // Check if game ended after bot's move
-        if let Some(outcome) = TicTacToe::is_terminal(state) {
-            self.game_over = Some(outcome);
+        match state {
+            ClientGameState::TicTacToe(state) => {
+                let mv = gc_shared::game::tictactoe::TicTacToeMove { row, col };
+                if TicTacToe::validate_move(state, player_id, &mv).is_err() {
+                    return;
+                }
+                TicTacToe::apply_move(state, player_id, &mv);
+                if let Some(outcome) = TicTacToe::is_terminal(state) {
+                    self.game_over = Some(outcome);
+                    return;
+                }
+                let bot_mv = tictactoe::bot_move(state, difficulty);
+                let bot_id = TicTacToe::current_player(state);
+                TicTacToe::apply_move(state, bot_id, &bot_mv);
+                if let Some(outcome) = TicTacToe::is_terminal(state) {
+                    self.game_over = Some(outcome);
+                }
+            }
+            ClientGameState::Connect4(state) => {
+                let mv = gc_shared::game::connect4::Connect4Move { col };
+                if Connect4::validate_move(state, player_id, &mv).is_err() {
+                    return;
+                }
+                Connect4::apply_move(state, player_id, &mv);
+                if let Some(outcome) = Connect4::is_terminal(state) {
+                    self.game_over = Some(outcome);
+                    return;
+                }
+                let bot_mv = connect4::bot_move(state, difficulty);
+                let bot_id = Connect4::current_player(state);
+                Connect4::apply_move(state, bot_id, &bot_mv);
+                if let Some(outcome) = Connect4::is_terminal(state) {
+                    self.game_over = Some(outcome);
+                }
+            }
         }
     }
 
@@ -304,6 +354,19 @@ impl App {
         self.game_state = None;
         self.game_over = None;
         self.screen = Screen::Lobby;
+    }
+
+    /// Check if it's our turn in the current game.
+    pub fn is_our_turn(&self) -> bool {
+        let state = match self.game_state.as_ref() {
+            Some(s) => s,
+            None => return false,
+        };
+        let current = match state {
+            ClientGameState::TicTacToe(s) => TicTacToe::current_player(s),
+            ClientGameState::Connect4(s) => Connect4::current_player(s),
+        };
+        Some(current) == self.my_player_id
     }
 
     /// Called when a player joins our room.
@@ -439,7 +502,10 @@ mod tests {
         app.play_solo_move(0, 0);
         let state = app.game_state.as_ref().unwrap();
         // Player's move + bot's response = 2 moves
-        assert_eq!(state.move_count, 2);
+        match state {
+            ClientGameState::TicTacToe(s) => assert_eq!(s.move_count, 2),
+            _ => panic!("expected TicTacToe state"),
+        }
     }
 
     #[test]
@@ -448,15 +514,20 @@ mod tests {
         app.start_solo_game(Difficulty::Easy);
         // Play until bot responds
         app.play_solo_move(0, 0);
-        let move_count_before = app.game_state.as_ref().unwrap().move_count;
-        assert!(move_count_before >= 2);
+        match app.game_state.as_ref().unwrap() {
+            ClientGameState::TicTacToe(s) => assert!(s.move_count >= 2),
+            _ => panic!("expected TicTacToe state"),
+        }
 
         // Simulate game over and rematch
         app.game_over = Some(GameOutcome::Draw);
         app.rematch_solo();
 
         assert!(app.game_over.is_none());
-        assert_eq!(app.game_state.as_ref().unwrap().move_count, 0);
+        match app.game_state.as_ref().unwrap() {
+            ClientGameState::TicTacToe(s) => assert_eq!(s.move_count, 0),
+            _ => panic!("expected TicTacToe state"),
+        }
         assert_eq!(app.screen, Screen::InGame);
         assert!(matches!(
             app.game_mode,
@@ -464,6 +535,21 @@ mod tests {
                 difficulty: Difficulty::Easy
             }
         ));
+    }
+
+    #[test]
+    fn solo_connect4_starts_and_moves() {
+        let mut app = test_app();
+        app.selected_game_type = GameType::Connect4;
+        app.start_solo_game(Difficulty::Easy);
+        assert_eq!(app.screen, Screen::InGame);
+        assert!(matches!(app.game_state, Some(ClientGameState::Connect4(_))));
+        // Play a move in center column
+        app.play_solo_move(0, 3);
+        match app.game_state.as_ref().unwrap() {
+            ClientGameState::Connect4(s) => assert_eq!(s.move_count, 2),
+            _ => panic!("expected Connect4 state"),
+        }
     }
 
     #[test]

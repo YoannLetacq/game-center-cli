@@ -38,7 +38,10 @@ pub fn run(mut app: App) -> io::Result<()> {
             Screen::Login => screens::login::render(frame, &app),
             Screen::Lobby => screens::lobby::render(frame, &app),
             Screen::Room => screens::room::render(frame, &app),
-            Screen::InGame => render::tictactoe::render(frame, &app),
+            Screen::InGame => match &app.game_state {
+                Some(app::ClientGameState::Connect4(_)) => render::connect4::render(frame, &app),
+                _ => render::tictactoe::render(frame, &app),
+            },
         })?;
 
         // Process network events (non-blocking)
@@ -239,12 +242,20 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         KeyCode::Char('r') | KeyCode::Char('R') => {
             let _ = net.send(NetCommand::ListRooms);
         }
+        KeyCode::Char('g') | KeyCode::Char('G') => {
+            // Cycle through available game types
+            app.selected_game_type = match app.selected_game_type {
+                gc_shared::types::GameType::TicTacToe => gc_shared::types::GameType::Connect4,
+                gc_shared::types::GameType::Connect4 => gc_shared::types::GameType::TicTacToe,
+                _ => gc_shared::types::GameType::TicTacToe,
+            };
+        }
         KeyCode::Char('c') | KeyCode::Char('C') => {
             let settings = gc_shared::types::GameSettings::default();
-            app.current_game_type = gc_shared::types::GameType::TicTacToe;
+            app.current_game_type = app.selected_game_type;
             app.current_max_players = settings.max_players;
             let _ = net.send(NetCommand::CreateRoom {
-                game_type: gc_shared::types::GameType::TicTacToe,
+                game_type: app.selected_game_type,
                 settings,
             });
         }
@@ -263,6 +274,7 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         }
         KeyCode::Enter => {
             if let Some(room) = app.rooms.get(app.selected_room) {
+                app.selected_game_type = room.game_type;
                 app.current_game_type = room.game_type;
                 app.current_max_players = room.max_players;
                 let _ = net.send(NetCommand::JoinRoom { room_id: room.id });
@@ -280,18 +292,24 @@ fn handle_game_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                 if matches!(app.game_mode, GameMode::Solo { .. }) {
                     app.rematch_solo();
                 }
-                // Online rematch: TODO in later phase
             }
-            _ => {} // Esc is handled in handle_key before this function
+            _ => {}
         }
         return;
     }
 
-    let is_our_turn = app
-        .game_state
-        .as_ref()
-        .is_some_and(|s| Some(s.players[s.current_turn]) == app.my_player_id);
+    // Dispatch cursor movement based on game type
+    match &app.game_state {
+        Some(app::ClientGameState::Connect4(_)) => {
+            handle_connect4_key(app, code, net);
+        }
+        _ => {
+            handle_tictactoe_key(app, code, net);
+        }
+    }
+}
 
+fn handle_tictactoe_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
     match code {
         KeyCode::Up => {
             if app.cursor_row > 0 {
@@ -314,7 +332,7 @@ fn handle_game_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
             }
         }
         KeyCode::Enter => {
-            if is_our_turn {
+            if app.is_our_turn() {
                 match &app.game_mode {
                     GameMode::Solo { .. } => {
                         app.play_solo_move(app.cursor_row, app.cursor_col);
@@ -322,6 +340,40 @@ fn handle_game_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                     GameMode::Online => {
                         let mv = gc_shared::game::tictactoe::TicTacToeMove {
                             row: app.cursor_row,
+                            col: app.cursor_col,
+                        };
+                        if let Ok(data) = gc_shared::protocol::codec::encode(&mv) {
+                            let _ = net.send(NetCommand::GameAction { data });
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_connect4_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
+    use gc_shared::game::connect4::COLS;
+    match code {
+        KeyCode::Left => {
+            if app.cursor_col > 0 {
+                app.cursor_col -= 1;
+            }
+        }
+        KeyCode::Right => {
+            if app.cursor_col < COLS as u8 - 1 {
+                app.cursor_col += 1;
+            }
+        }
+        KeyCode::Enter => {
+            if app.is_our_turn() {
+                match &app.game_mode {
+                    GameMode::Solo { .. } => {
+                        app.play_solo_move(0, app.cursor_col);
+                    }
+                    GameMode::Online => {
+                        let mv = gc_shared::game::connect4::Connect4Move {
                             col: app.cursor_col,
                         };
                         if let Ok(data) = gc_shared::protocol::codec::encode(&mv) {

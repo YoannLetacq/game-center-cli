@@ -21,7 +21,12 @@ pub fn render(frame: &mut Frame, app: &App) {
         .split(frame.area());
 
     // Header
-    let header_text = format!("{} — {}", t.get("lobby.title"), app.username_input.as_str());
+    let header_text = format!(
+        "{} — {} | Game: {}",
+        t.get("lobby.title"),
+        app.username_input.as_str(),
+        app.selected_game_type,
+    );
     let header = Paragraph::new(header_text)
         .alignment(Alignment::Center)
         .style(
@@ -105,6 +110,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         ]))
     } else {
         Paragraph::new(Line::from(vec![
+            Span::styled("G", Style::default().fg(Color::Cyan)),
+            Span::raw(": Game  "),
             Span::styled("B", Style::default().fg(Color::Magenta)),
             Span::raw(": vs Bot  "),
             Span::styled("C", Style::default().fg(Color::Green)),

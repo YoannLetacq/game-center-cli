@@ -6,7 +6,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use crate::tui::app::App;
+use crate::tui::app::{App, ClientGameState};
 
 pub fn render(frame: &mut Frame, app: &App) {
     let t = &app.translator;
@@ -32,24 +32,17 @@ pub fn render(frame: &mut Frame, app: &App) {
             }
             GameOutcome::Draw => t.get("game.draw").to_string(),
         }
-    } else if let Some(ref state) = app.game_state {
-        let current = state.players[state.current_turn];
-        if Some(current) == app.my_player_id {
-            t.get("game.your_turn").to_string()
-        } else {
-            t.get("game.opponent_turn").to_string()
-        }
+    } else if app.is_our_turn() {
+        t.get("game.your_turn").to_string()
+    } else if app.game_state.is_some() {
+        t.get("game.opponent_turn").to_string()
     } else {
         "Waiting for game...".to_string()
     };
 
     let header_color = if app.game_over.is_some() {
         Color::Yellow
-    } else if app
-        .game_state
-        .as_ref()
-        .is_some_and(|s| Some(s.players[s.current_turn]) == app.my_player_id)
-    {
+    } else if app.is_our_turn() {
         Color::Green
     } else {
         Color::DarkGray
@@ -66,7 +59,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     frame.render_widget(header, chunks[0]);
 
     // Board
-    if let Some(ref state) = app.game_state {
+    if let Some(ClientGameState::TicTacToe(ref state)) = app.game_state {
         let board_area = centered_rect(30, 80, chunks[1]);
         render_board(
             frame,
