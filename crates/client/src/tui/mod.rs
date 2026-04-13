@@ -171,9 +171,31 @@ fn handle_login_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         return;
     }
 
+    // Sub-state: solo difficulty selection on login screen
+    if app.selecting_difficulty {
+        match code {
+            KeyCode::Char('e') | KeyCode::Char('E') => {
+                app.selecting_difficulty = false;
+                app.start_solo_game(gc_shared::types::Difficulty::Easy);
+            }
+            KeyCode::Char('h') | KeyCode::Char('H') => {
+                app.selecting_difficulty = false;
+                app.start_solo_game(gc_shared::types::Difficulty::Hard);
+            }
+            KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
+                app.selecting_difficulty = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match code {
         KeyCode::Tab => app.toggle_field(),
         KeyCode::F(2) => app.toggle_login_mode(),
+        KeyCode::F(3) => {
+            app.selecting_difficulty = true;
+        }
         KeyCode::Enter => {
             if let Some(err) = app.validate_login_form() {
                 app.login_error = Some(err);

@@ -348,12 +348,16 @@ impl App {
         self.start_solo_game(difficulty);
     }
 
-    /// Leave a solo game and return to lobby.
+    /// Leave a solo game and return to lobby (if authenticated) or login screen.
     pub fn leave_solo_game(&mut self) {
         self.game_mode = GameMode::Online;
         self.game_state = None;
         self.game_over = None;
-        self.screen = Screen::Lobby;
+        self.screen = if self.authenticated {
+            Screen::Lobby
+        } else {
+            Screen::Login
+        };
     }
 
     /// Check if it's our turn in the current game.
@@ -565,10 +569,17 @@ mod tests {
     #[test]
     fn leave_solo_game() {
         let mut app = test_app();
+        // Unauthenticated: should return to login
+        app.start_solo_game(Difficulty::Hard);
+        app.leave_solo_game();
+        assert_eq!(app.screen, Screen::Login);
+        assert!(app.game_state.is_none());
+        assert_eq!(app.game_mode, GameMode::Online);
+
+        // Authenticated: should return to lobby
+        app.authenticated = true;
         app.start_solo_game(Difficulty::Hard);
         app.leave_solo_game();
         assert_eq!(app.screen, Screen::Lobby);
-        assert!(app.game_state.is_none());
-        assert_eq!(app.game_mode, GameMode::Online);
     }
 }

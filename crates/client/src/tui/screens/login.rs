@@ -34,18 +34,34 @@ pub fn render(frame: &mut Frame, app: &App) {
     render_form(frame, app, form_area);
 
     // Footer
-    let mode_hint = match app.login_mode {
-        LoginMode::Login => t.get("login.switch_to_register"),
-        LoginMode::Register => t.get("login.switch_to_login"),
-    };
-    let footer = Paragraph::new(Line::from(vec![
-        Span::raw("Tab: switch field | F2: "),
-        Span::styled(mode_hint, Style::default().fg(Color::Yellow)),
-        Span::raw(" | Esc: "),
-        Span::styled(t.get("app.quit"), Style::default().fg(Color::Red)),
-    ]))
-    .alignment(Alignment::Center);
-    frame.render_widget(footer, chunks[2]);
+    if app.selecting_difficulty {
+        let footer = Paragraph::new(Line::from(vec![
+            Span::styled("E", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::raw(": Easy | "),
+            Span::styled("H", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            Span::raw(": Hard | "),
+            Span::styled("B", Style::default().fg(Color::Yellow)),
+            Span::raw(": "),
+            Span::styled(t.get("app.back"), Style::default().fg(Color::Yellow)),
+        ]))
+        .alignment(Alignment::Center);
+        frame.render_widget(footer, chunks[2]);
+    } else {
+        let mode_hint = match app.login_mode {
+            LoginMode::Login => t.get("login.switch_to_register"),
+            LoginMode::Register => t.get("login.switch_to_login"),
+        };
+        let footer = Paragraph::new(Line::from(vec![
+            Span::raw("Tab: switch field | F2: "),
+            Span::styled(mode_hint, Style::default().fg(Color::Yellow)),
+            Span::raw(" | F3: "),
+            Span::styled(t.get("login.play_solo"), Style::default().fg(Color::Green)),
+            Span::raw(" | Esc: "),
+            Span::styled(t.get("app.quit"), Style::default().fg(Color::Red)),
+        ]))
+        .alignment(Alignment::Center);
+        frame.render_widget(footer, chunks[2]);
+    }
 }
 
 fn render_form(frame: &mut Frame, app: &App, area: Rect) {
