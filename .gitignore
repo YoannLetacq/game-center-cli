@@ -8,3 +8,4 @@ certs/
 server.toml
 *.db-shm
 *.db-wal
+.claude
