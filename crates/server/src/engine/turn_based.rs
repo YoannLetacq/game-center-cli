@@ -23,7 +23,7 @@ pub enum GameState {
 impl TurnBasedGame {
     /// Check if a game type is currently implemented.
     pub fn is_supported(game_type: GameType) -> bool {
-        matches!(game_type, GameType::TicTacToe)
+        matches!(game_type, GameType::TicTacToe | GameType::Connect4)
     }
 
     /// Create a new game for the given type and players.
