@@ -210,6 +210,26 @@ fn handle_login_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
 
 fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
     app.status_error = None; // Clear error on any key press
+
+    // Sub-state: difficulty selection
+    if app.selecting_difficulty {
+        match code {
+            KeyCode::Char('e') | KeyCode::Char('E') => {
+                app.selecting_difficulty = false;
+                app.start_solo_game(gc_shared::types::Difficulty::Easy);
+            }
+            KeyCode::Char('h') | KeyCode::Char('H') => {
+                app.selecting_difficulty = false;
+                app.start_solo_game(gc_shared::types::Difficulty::Hard);
+            }
+            KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
+                app.selecting_difficulty = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match code {
         KeyCode::Char('q') => app.quit(),
         KeyCode::Char('r') | KeyCode::Char('R') => {
@@ -222,8 +242,7 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
             });
         }
         KeyCode::Char('b') | KeyCode::Char('B') => {
-            // Start solo game vs Hard bot
-            app.start_solo_game(gc_shared::types::Difficulty::Hard);
+            app.selecting_difficulty = true;
         }
         KeyCode::Up => {
             if app.selected_room > 0 {
@@ -245,7 +264,17 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
 }
 
 fn handle_game_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
+    // When game is over, only allow rematch or leave
     if app.game_over.is_some() {
+        match code {
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                if matches!(app.game_mode, GameMode::Solo { .. }) {
+                    app.rematch_solo();
+                }
+                // Online rematch: TODO in later phase
+            }
+            _ => {} // Esc is handled in handle_key before this function
+        }
         return;
     }
 
