@@ -67,6 +67,9 @@ pub struct App {
     pub game_over: Option<GameOutcome>,
     pub my_player_id: Option<PlayerId>,
 
+    // Lobby sub-state: difficulty selection for solo mode
+    pub selecting_difficulty: bool,
+
     // Generic status error (shown on lobby/room screens)
     pub status_error: Option<String>,
 }
@@ -106,6 +109,7 @@ impl App {
             cursor_col: 1,
             game_over: None,
             my_player_id: None,
+            selecting_difficulty: false,
             status_error: None,
         }
     }
@@ -270,6 +274,15 @@ impl App {
         }
     }
 
+    /// Restart the current solo game with the same difficulty.
+    pub fn rematch_solo(&mut self) {
+        let difficulty = match &self.game_mode {
+            GameMode::Solo { difficulty } => *difficulty,
+            _ => return,
+        };
+        self.start_solo_game(difficulty);
+    }
+
     /// Leave a solo game and return to lobby.
     pub fn leave_solo_game(&mut self) {
         self.game_mode = GameMode::Online;
@@ -412,6 +425,40 @@ mod tests {
         let state = app.game_state.as_ref().unwrap();
         // Player's move + bot's response = 2 moves
         assert_eq!(state.move_count, 2);
+    }
+
+    #[test]
+    fn solo_rematch_resets_game() {
+        let mut app = test_app();
+        app.start_solo_game(Difficulty::Easy);
+        // Play until bot responds
+        app.play_solo_move(0, 0);
+        let move_count_before = app.game_state.as_ref().unwrap().move_count;
+        assert!(move_count_before >= 2);
+
+        // Simulate game over and rematch
+        app.game_over = Some(GameOutcome::Draw);
+        app.rematch_solo();
+
+        assert!(app.game_over.is_none());
+        assert_eq!(app.game_state.as_ref().unwrap().move_count, 0);
+        assert_eq!(app.screen, Screen::InGame);
+        assert!(matches!(
+            app.game_mode,
+            GameMode::Solo {
+                difficulty: Difficulty::Easy
+            }
+        ));
+    }
+
+    #[test]
+    fn difficulty_selection_state() {
+        let mut app = test_app();
+        assert!(!app.selecting_difficulty);
+        app.selecting_difficulty = true;
+        assert!(app.selecting_difficulty);
+        app.selecting_difficulty = false;
+        assert!(!app.selecting_difficulty);
     }
 
     #[test]
