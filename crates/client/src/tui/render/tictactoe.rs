@@ -80,7 +80,11 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // Footer
     let footer_text = if app.game_over.is_some() {
-        format!("Esc: {} | {}", t.get("game.leave"), t.get("game.rematch"))
+        format!(
+            "R: {} | Esc: {}",
+            t.get("game.rematch"),
+            t.get("game.leave")
+        )
     } else {
         format!(
             "Arrow keys: move | Enter: place | Esc: {}",
