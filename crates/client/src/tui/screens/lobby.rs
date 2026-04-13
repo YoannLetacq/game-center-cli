@@ -94,25 +94,36 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // Footer
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled("B", Style::default().fg(Color::Magenta)),
-        Span::raw(": vs Bot  "),
-        Span::styled("C", Style::default().fg(Color::Green)),
-        Span::raw(": "),
-        Span::raw(t.get("lobby.create_room")),
-        Span::raw("  "),
-        Span::styled("Enter", Style::default().fg(Color::Green)),
-        Span::raw(": "),
-        Span::raw(t.get("lobby.join_room")),
-        Span::raw("  "),
-        Span::styled("R", Style::default().fg(Color::Yellow)),
-        Span::raw(": "),
-        Span::raw(t.get("lobby.refresh")),
-        Span::raw("  "),
-        Span::styled("Esc", Style::default().fg(Color::Red)),
-        Span::raw(": "),
-        Span::raw(t.get("app.quit")),
-    ]))
+    let footer = if app.selecting_difficulty {
+        Paragraph::new(Line::from(vec![
+            Span::styled("E", Style::default().fg(Color::Green)),
+            Span::raw(": Easy  "),
+            Span::styled("H", Style::default().fg(Color::Red)),
+            Span::raw(": Hard  "),
+            Span::styled("Esc", Style::default().fg(Color::DarkGray)),
+            Span::raw(": Cancel"),
+        ]))
+    } else {
+        Paragraph::new(Line::from(vec![
+            Span::styled("B", Style::default().fg(Color::Magenta)),
+            Span::raw(": vs Bot  "),
+            Span::styled("C", Style::default().fg(Color::Green)),
+            Span::raw(": "),
+            Span::raw(t.get("lobby.create_room")),
+            Span::raw("  "),
+            Span::styled("Enter", Style::default().fg(Color::Green)),
+            Span::raw(": "),
+            Span::raw(t.get("lobby.join_room")),
+            Span::raw("  "),
+            Span::styled("R", Style::default().fg(Color::Yellow)),
+            Span::raw(": "),
+            Span::raw(t.get("lobby.refresh")),
+            Span::raw("  "),
+            Span::styled("Esc", Style::default().fg(Color::Red)),
+            Span::raw(": "),
+            Span::raw(t.get("app.quit")),
+        ]))
+    }
     .alignment(Alignment::Center);
     frame.render_widget(footer, chunks[3]);
 }
