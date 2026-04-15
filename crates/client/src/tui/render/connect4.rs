@@ -4,20 +4,26 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph, Clear};
 
 use crate::tui::app::{App, ClientGameState};
+
+// Each cell is CELL_W chars wide and CELL_H lines tall
+const CELL_W: u16 = 7;
+const CELL_H: u16 = 3;
 
 pub fn render(frame: &mut Frame, app: &App) {
     let t = &app.translator;
 
+    let board_height = (ROWS as u16) * CELL_H + 2;
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // header
-            Constraint::Length(2), // column selector
-            Constraint::Min(14),   // board
-            Constraint::Length(3), // footer
+            Constraint::Length(3),           // header
+            Constraint::Length(2),           // column selector
+            Constraint::Min(board_height),   // board
+            Constraint::Length(3),           // footer
         ])
         .split(frame.area());
 
@@ -59,34 +65,29 @@ pub fn render(frame: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::BOTTOM));
     frame.render_widget(header, chunks[0]);
 
+    // Board area — fixed size, centered
+    let board_area = fixed_board_rect(chunks[2]);
+
     // Column selector arrow
     if app.game_over.is_none() {
-        let board_area = centered_rect(60, 100, chunks[2]);
-        render_column_selector(
-            frame,
-            app.cursor_col,
-            board_area.x,
-            board_area.width,
-            chunks[1],
-        );
+        render_column_selector(frame, app.cursor_col, board_area, chunks[1]);
     }
 
     // Board
     if let Some(ClientGameState::Connect4(ref state)) = app.game_state {
-        let board_area = centered_rect(60, 100, chunks[2]);
         render_board(frame, state, app.cursor_col, app, board_area);
     }
 
     // Footer
     let footer_text = if app.game_over.is_some() {
         format!(
-            "R: {} | Esc: {}",
+            "R: {} | Esc: {} | I: Help",
             t.get("game.rematch"),
             t.get("game.leave")
         )
     } else {
         format!(
-            "Left/Right: move | Enter: drop | Esc: {}",
+            "Left/Right: move | Enter: drop | Esc: {} | I: Help",
             t.get("game.leave")
         )
     };
@@ -94,91 +95,70 @@ pub fn render(frame: &mut Frame, app: &App) {
         .alignment(Alignment::Center)
         .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(footer, chunks[3]);
+
+    if app.show_help {
+        render_help_modal(frame, app);
+    }
 }
 
-fn render_column_selector(
-    frame: &mut Frame,
-    cursor_col: u8,
-    board_x: u16,
-    board_width: u16,
-    area: Rect,
-) {
-    let col_width = board_width / COLS as u16;
-    let mut spans = Vec::new();
+fn fixed_board_rect(area: Rect) -> Rect {
+    let board_width = (COLS as u16) * CELL_W + 2;
+    let board_height = (ROWS as u16) * CELL_H + 2;
+    let x = area.x + area.width.saturating_sub(board_width) / 2;
+    let y = area.y + area.height.saturating_sub(board_height) / 2;
+    Rect::new(x, y, board_width.min(area.width), board_height.min(area.height))
+}
 
+fn render_column_selector(frame: &mut Frame, cursor_col: u8, board_area: Rect, area: Rect) {
+    // Align arrows with board columns (skip 1-char left border)
+    let mut spans = Vec::new();
     for c in 0..COLS as u8 {
-        let text = if c == cursor_col { " v " } else { "   " };
-        let style = if c == cursor_col {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
+        // Fill entire column width with highlight so the selected column is unmissable
+        let (text, style) = if c == cursor_col {
+            (
+                " ▼▼▼▼▼ ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
-            Style::default()
+            ("       ", Style::default())
         };
         spans.push(Span::styled(text, style));
-        // Add padding between columns
-        if (c as usize) < COLS - 1 {
-            let pad = col_width.saturating_sub(3);
-            spans.push(Span::raw(" ".repeat(pad as usize)));
-        }
     }
 
-    // Center the selector by offsetting from board_x
-    let selector = Paragraph::new(Line::from(spans)).alignment(Alignment::Center);
-
+    let selector = Paragraph::new(Line::from(spans));
     let selector_area = Rect {
-        x: board_x,
+        x: board_area.x + 1,
         y: area.y,
-        width: board_width,
+        width: (COLS as u16) * CELL_W,
         height: area.height,
     };
     frame.render_widget(selector, selector_area);
 }
 
 fn render_board(frame: &mut Frame, state: &Connect4State, cursor_col: u8, app: &App, area: Rect) {
-    // Determine which color we are
-    let my_cell = app
-        .my_player_id
-        .and_then(|pid| {
-            if state.players[0] == pid {
-                Some(Cell::Red)
-            } else if state.players[1] == pid {
-                Some(Cell::Yellow)
-            } else {
-                None
-            }
-        })
-        .unwrap_or(Cell::Red);
-
     let block = Block::default()
-        .title("Connect 4")
+        .title(" Connect 4 ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Blue))
         .style(Style::default().bg(Color::Blue));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Each row is 2 lines tall (symbol + gap)
-    let mut row_constraints: Vec<Constraint> = Vec::new();
-    for i in 0..ROWS {
-        row_constraints.push(Constraint::Length(2));
-        if i < ROWS - 1 {
-            row_constraints.push(Constraint::Length(0)); // no separator needed
-        }
-    }
+    let row_constraints: Vec<Constraint> = (0..ROWS).map(|_| Constraint::Length(CELL_H)).collect();
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints(row_constraints)
         .split(inner);
 
-    // Render rows top-to-bottom (board row 5 = top, row 0 = bottom)
     for display_row in 0..ROWS {
         let board_row = ROWS - 1 - display_row;
-        let row_area = rows[display_row * 2];
+        let row_area = rows[display_row];
 
-        let col_constraints: Vec<Constraint> = (0..COLS)
-            .map(|_| Constraint::Ratio(1, COLS as u32))
-            .collect();
+        let col_constraints: Vec<Constraint> =
+            (0..COLS).map(|_| Constraint::Length(CELL_W)).collect();
         let cols = Layout::default()
             .direction(Direction::Horizontal)
             .constraints(col_constraints)
@@ -188,66 +168,94 @@ fn render_board(frame: &mut Frame, state: &Connect4State, cursor_col: u8, app: &
             let cell = state.board[board_row][board_col];
             let is_cursor_col = board_col == cursor_col as usize;
             let is_game_over = app.game_over.is_some();
+            let cell_area = cols[board_col];
 
-            let (symbol, color) = match cell {
-                Cell::Red => (
-                    "\u{25cf}", // filled circle ●
-                    if cell == my_cell {
-                        Color::LightRed
-                    } else {
-                        Color::Red
-                    },
-                ),
-                Cell::Yellow => (
-                    "\u{25cf}",
-                    if cell == my_cell {
-                        Color::LightYellow
-                    } else {
-                        Color::Yellow
-                    },
-                ),
+            // 3-line circle rendering per cell
+            let lines: Vec<Line> = match cell {
+                Cell::Red => {
+                    let s = Style::default().fg(Color::Red).bg(Color::Blue);
+                    vec![
+                        Line::from(Span::styled(" ╭───╮ ", s)),
+                        Line::from(Span::styled(" │███│ ", s)),
+                        Line::from(Span::styled(" ╰───╯ ", s)),
+                    ]
+                }
+                Cell::Yellow => {
+                    let s = Style::default().fg(Color::Rgb(255, 140, 0)).bg(Color::Blue);
+                    vec![
+                        Line::from(Span::styled(" ╭───╮ ", s)),
+                        Line::from(Span::styled(" │███│ ", s)),
+                        Line::from(Span::styled(" ╰───╯ ", s)),
+                    ]
+                }
                 Cell::Empty => {
-                    if is_cursor_col && !is_game_over {
-                        ("\u{25cf}", Color::Rgb(50, 50, 50)) // highlight column slightly
+                    let fg = if is_cursor_col && !is_game_over {
+                        Color::Yellow
                     } else {
-                        ("\u{25cf}", Color::Black)
-                    }
+                        Color::White
+                    };
+                    let s = Style::default().fg(fg).bg(Color::Blue);
+                    vec![
+                        Line::from(Span::styled(" ╭───╮ ", s)),
+                        Line::from(Span::styled(" │   │ ", s)),
+                        Line::from(Span::styled(" ╰───╯ ", s)),
+                    ]
                 }
             };
 
-            let style = Style::default().fg(color).bg(Color::Blue);
-
-            let cell_widget = Paragraph::new(Line::from(Span::styled(symbol, style)))
-                .alignment(Alignment::Center);
-
-            frame.render_widget(cell_widget, cols[board_col]);
+            let cell_widget = Paragraph::new(lines).style(Style::default().bg(Color::Blue));
+            frame.render_widget(cell_widget, cell_area);
         }
     }
+}
 
-    // Column numbers at the bottom
-    if inner.height > ROWS as u16 * 2 {
-        let numbers_area = Rect {
-            x: inner.x,
-            y: inner.y + inner.height - 1,
-            width: inner.width,
-            height: 1,
-        };
-        let col_nums: Vec<Span> = (1..=COLS)
-            .map(|c| {
-                let style = if c - 1 == cursor_col as usize {
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .bg(Color::Blue)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::Black).bg(Color::Blue)
-                };
-                Span::styled(format!("  {}  ", c), style)
-            })
-            .collect();
-        let numbers = Paragraph::new(Line::from(col_nums)).alignment(Alignment::Center);
-        frame.render_widget(numbers, numbers_area);
-    }
+fn render_help_modal(frame: &mut Frame, app: &App) {
+    let area = centered_rect(60, 60, frame.area());
+    frame.render_widget(Clear, area);
+
+    let (title, rules) = match &app.game_state {
+        Some(ClientGameState::Connect4(_)) => (
+            "Connect 4 Rules",
+            vec![
+                "Goal: Connect 4 of your pieces in a row.",
+                "Line can be horizontal, vertical, or diagonal.",
+                "Players take turns dropping one piece from the top",
+                "into one of the seven columns.",
+                "",
+                "Controls:",
+                "- Left/Right: Select column",
+                "- Enter: Drop piece",
+                "- I: Close help",
+                "- Esc: Leave game",
+            ],
+        ),
+        _ => (
+            "Tic-Tac-Toe Rules",
+            vec![
+                "Goal: Connect 3 of your marks in a row.",
+                "Line can be horizontal, vertical, or diagonal.",
+                "",
+                "Controls:",
+                "- Arrow Keys: Move cursor",
+                "- Enter: Place mark",
+                "- I: Close help",
+                "- Esc: Leave game",
+            ],
+        ),
+    };
+
+    let help_text: Vec<Line> = rules.into_iter().map(|l| Line::from(l)).collect();
+    
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow));
+
+    let paragraph = Paragraph::new(help_text)
+        .block(block)
+        .alignment(Alignment::Left);
+
+    frame.render_widget(paragraph, area);
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
@@ -269,3 +277,4 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         ])
         .split(popup_layout[1])[1]
 }
+
