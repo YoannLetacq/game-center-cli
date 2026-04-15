@@ -61,7 +61,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // Column selector arrow
     if app.game_over.is_none() {
-        let board_area = centered_rect(35, 100, chunks[2]);
+        let board_area = centered_rect(60, 100, chunks[2]);
         render_column_selector(
             frame,
             app.cursor_col,
@@ -73,7 +73,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // Board
     if let Some(ClientGameState::Connect4(ref state)) = app.game_state {
-        let board_area = centered_rect(35, 100, chunks[2]);
+        let board_area = centered_rect(60, 100, chunks[2]);
         render_board(frame, state, app.cursor_col, app, board_area);
     }
 
@@ -153,7 +153,8 @@ fn render_board(frame: &mut Frame, state: &Connect4State, cursor_col: u8, app: &
     let block = Block::default()
         .title("Connect 4")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Blue));
+        .border_style(Style::default().fg(Color::Blue))
+        .style(Style::default().bg(Color::Blue));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -192,7 +193,7 @@ fn render_board(frame: &mut Frame, state: &Connect4State, cursor_col: u8, app: &
                 Cell::Red => (
                     "\u{25cf}", // filled circle ●
                     if cell == my_cell {
-                        Color::Cyan
+                        Color::LightRed
                     } else {
                         Color::Red
                     },
@@ -200,21 +201,21 @@ fn render_board(frame: &mut Frame, state: &Connect4State, cursor_col: u8, app: &
                 Cell::Yellow => (
                     "\u{25cf}",
                     if cell == my_cell {
-                        Color::Cyan
+                        Color::LightYellow
                     } else {
                         Color::Yellow
                     },
                 ),
                 Cell::Empty => {
                     if is_cursor_col && !is_game_over {
-                        ("\u{25cb}", Color::DarkGray) // empty circle ○
+                        ("\u{25cf}", Color::Rgb(50, 50, 50)) // highlight column slightly
                     } else {
-                        ("\u{25cb}", Color::Rgb(50, 50, 50))
+                        ("\u{25cf}", Color::Black)
                     }
                 }
             };
 
-            let style = Style::default().fg(color);
+            let style = Style::default().fg(color).bg(Color::Blue);
 
             let cell_widget = Paragraph::new(Line::from(Span::styled(symbol, style)))
                 .alignment(Alignment::Center);
@@ -236,9 +237,10 @@ fn render_board(frame: &mut Frame, state: &Connect4State, cursor_col: u8, app: &
                 let style = if c - 1 == cursor_col as usize {
                     Style::default()
                         .fg(Color::Yellow)
+                        .bg(Color::Blue)
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(Color::DarkGray)
+                    Style::default().fg(Color::Black).bg(Color::Blue)
                 };
                 Span::styled(format!("  {}  ", c), style)
             })
