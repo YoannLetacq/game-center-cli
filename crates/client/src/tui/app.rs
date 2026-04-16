@@ -89,6 +89,21 @@ pub struct App {
 
     // Generic status error (shown on lobby/room screens)
     pub status_error: Option<String>,
+
+    // UI state
+    pub show_help: bool,
+
+    // Rematch state (online games only)
+    /// We sent a rematch request; waiting for opponent's response.
+    pub rematch_pending: bool,
+    /// Opponent sent a rematch request; waiting for our Y/N.
+    pub rematch_incoming: bool,
+
+    // Solo mode turn order
+    /// Whether the human player went first in the last solo game.
+    /// None = no solo game played yet (first game will be random).
+    /// Alternates on every rematch.
+    pub solo_player_went_first: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,6 +148,10 @@ impl App {
             selecting_difficulty: false,
             selecting_multiplayer_game: false,
             status_error: None,
+            show_help: false,
+            rematch_pending: false,
+            rematch_incoming: false,
+            solo_player_went_first: None,
         }
     }
 
@@ -217,6 +236,8 @@ impl App {
         self.current_room_players.clear();
         self.game_state = None;
         self.game_over = None;
+        self.rematch_pending = false;
+        self.rematch_incoming = false;
         self.cursor_row = 1;
         self.cursor_col = 1;
         self.screen = Screen::Lobby;
@@ -397,6 +418,30 @@ impl App {
     /// Called when a player leaves our room.
     pub fn on_player_left(&mut self, player_id: gc_shared::types::PlayerId) {
         self.current_room_players.retain(|p| p.id != player_id);
+        // If the opponent disconnects mid-rematch flow, clear rematch state.
+        self.rematch_pending = false;
+        self.rematch_incoming = false;
+    }
+
+    /// Called when a rematch is accepted: clear game-over state so the incoming
+    /// GameStateUpdate starts the new game cleanly.
+    pub fn on_rematch_accepted(&mut self) {
+        self.game_over = None;
+        self.rematch_pending = false;
+        self.rematch_incoming = false;
+        self.cursor_row = match self.current_game_type {
+            GameType::Connect4 => 0,
+            _ => 1,
+        };
+        self.cursor_col = match self.current_game_type {
+            GameType::Connect4 => 3,
+            _ => 1,
+        };
+    }
+
+    /// Called when a rematch is declined: clear flags and return to lobby.
+    pub fn on_rematch_declined(&mut self) {
+        self.on_room_left();
     }
 }
 

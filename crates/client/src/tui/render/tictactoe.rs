@@ -3,7 +3,6 @@ use gc_shared::types::GameOutcome;
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::tui::app::{App, ClientGameState};
@@ -60,7 +59,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // Board
     if let Some(ClientGameState::TicTacToe(ref state)) = app.game_state {
-        let board_area = centered_rect(30, 80, chunks[1]);
+        let board_area = centered_rect(40, 80, chunks[1]);
         render_board(
             frame,
             state,
@@ -72,7 +71,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // Footer
-    let footer_text = if app.game_over.is_some() {
+    let footer_text = if app.rematch_pending {
+        format!("Waiting for opponent... | Esc: {}", t.get("game.leave"))
+    } else if app.rematch_incoming {
+        format!("Y: Accept rematch | N: Decline | Esc: {}", t.get("game.leave"))
+    } else if app.game_over.is_some() {
         format!(
             "R: {} | Esc: {}",
             t.get("game.rematch"),
@@ -88,6 +91,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         .alignment(Alignment::Center)
         .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(footer, chunks[2]);
+
+    if app.rematch_pending || app.rematch_incoming {
+        super::render_rematch_overlay(frame, app);
+    }
 }
 
 fn render_board(
@@ -119,24 +126,25 @@ fn render_board(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Each cell is 5 chars wide, 3 lines tall
     let row_constraints = [
-        Constraint::Length(3),
+        Constraint::Ratio(1, 3),
         Constraint::Length(1), // separator
-        Constraint::Length(3),
+        Constraint::Ratio(1, 3),
         Constraint::Length(1), // separator
-        Constraint::Length(3),
+        Constraint::Ratio(1, 3),
     ];
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints(row_constraints)
         .split(inner);
 
-    for board_row in 0..3u8 {
-        let row_area = rows[board_row as usize * 2];
+    for display_row in 0..5usize {
+        let row_area = rows[display_row];
         let col_constraints = [
             Constraint::Ratio(1, 3),
+            Constraint::Length(1),
             Constraint::Ratio(1, 3),
+            Constraint::Length(1),
             Constraint::Ratio(1, 3),
         ];
         let cols = Layout::default()
@@ -144,64 +152,87 @@ fn render_board(
             .constraints(col_constraints)
             .split(row_area);
 
-        for board_col in 0..3u8 {
-            let cell = state.board[board_row as usize][board_col as usize];
-            let is_cursor = board_row == cursor_row && board_col == cursor_col;
-            let is_game_over = app.game_over.is_some();
-
-            let (symbol, color) = match cell {
-                Cell::X => (
-                    "X",
-                    if cell == my_symbol {
-                        Color::Cyan
-                    } else {
-                        Color::Red
-                    },
-                ),
-                Cell::O => (
-                    "O",
-                    if cell == my_symbol {
-                        Color::Cyan
-                    } else {
-                        Color::Red
-                    },
-                ),
-                Cell::Empty => {
-                    if is_cursor && !is_game_over {
-                        ("·", Color::Yellow)
-                    } else {
-                        (" ", Color::DarkGray)
-                    }
-                }
-            };
-
-            let mut style = Style::default().fg(color);
-            if is_cursor && !is_game_over {
-                style = style.add_modifier(Modifier::BOLD);
+        if display_row % 2 == 1 {
+            // Horizontal Separator row
+            for c in 0..5usize {
+                let sep = if c % 2 == 1 {
+                    Paragraph::new("┼")
+                } else {
+                    Paragraph::new("─".repeat(cols[c].width as usize))
+                };
+                let sep = sep.alignment(Alignment::Center)
+                    .style(Style::default().fg(Color::DarkGray));
+                frame.render_widget(sep, cols[c]);
             }
+        } else {
+            // Cell row
+            let board_row = (display_row / 2) as u8;
+            for c in 0..5usize {
+                if c % 2 == 1 {
+                    // Vertical Separator
+                    let height = cols[c].height as usize;
+                    let mut v_line = String::new();
+                    for _ in 0..height {
+                        v_line.push_str("│\n");
+                    }
+                    let sep = Paragraph::new(v_line.trim_end().to_string())
+                        .alignment(Alignment::Center)
+                        .style(Style::default().fg(Color::DarkGray));
+                    frame.render_widget(sep, cols[c]);
+                } else {
+                    // Cell
+                    let board_col = (c / 2) as u8;
+                    let cell = state.board[board_row as usize][board_col as usize];
+                    let is_cursor = board_row == cursor_row && board_col == cursor_col;
+                    let is_game_over = app.game_over.is_some();
 
-            let cell_widget = Paragraph::new(Line::from(Span::styled(symbol, style)))
-                .alignment(Alignment::Center)
-                .block(
-                    Block::default()
-                        .borders(if is_cursor && !is_game_over {
-                            Borders::ALL
-                        } else {
-                            Borders::NONE
-                        })
-                        .border_style(Style::default().fg(Color::Yellow)),
-                );
+                    let (symbol, color) = match cell {
+                        Cell::X => (
+                            "X",
+                            if cell == my_symbol {
+                                Color::Cyan
+                            } else {
+                                Color::Red
+                            },
+                        ),
+                        Cell::O => (
+                            "O",
+                            if cell == my_symbol {
+                                Color::Cyan
+                            } else {
+                                Color::Red
+                            },
+                        ),
+                        Cell::Empty => {
+                            if is_cursor && !is_game_over {
+                                ("·", Color::Yellow)
+                            } else {
+                                (" ", Color::DarkGray)
+                            }
+                        }
+                    };
 
-            frame.render_widget(cell_widget, cols[board_col as usize]);
-        }
+                    let mut style = Style::default().fg(color);
+                    if is_cursor && !is_game_over {
+                        style = style.add_modifier(Modifier::BOLD);
+                        style = style.bg(Color::Rgb(50, 50, 50));
+                    }
 
-        // Draw separator line between rows
-        if board_row < 2 {
-            let sep_area = rows[board_row as usize * 2 + 1];
-            let sep = Paragraph::new("─────┼─────┼─────")
-                .alignment(Alignment::Center)
-                .style(Style::default().fg(Color::DarkGray));
-            frame.render_widget(sep, sep_area);
+                    let height = cols[c].height as usize;
+                    let pad = if height > 1 { (height - 1) / 2 } else { 0 };
+                    let mut content = String::new();
+                    for _ in 0..pad {
+                        content.push('\n');
+                    }
+                    content.push_str(symbol);
+
+                    let cell_widget = Paragraph::new(content)
+                        .alignment(Alignment::Center)
+                        .block(Block::default().style(style));
+
+                    frame.render_widget(cell_widget, cols[c]);
+                }
+            }
         }
     }
 }

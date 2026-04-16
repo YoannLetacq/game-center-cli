@@ -125,12 +125,23 @@ impl LobbyManager {
         let room_info = {
             let mut rooms = self.rooms.write().await;
             rooms.get_mut(&room_id).map(|room| {
+                // First game: pick starting player randomly.
+                // Each rematch: alternate who goes first.
+                if room.games_played == 0 {
+                    let random_byte = uuid::Uuid::new_v4().as_bytes()[15];
+                    room.first_player_offset = random_byte & 1;
+                } else {
+                    room.first_player_offset = 1 - room.first_player_offset;
+                }
+                room.games_played += 1;
                 room.state = gc_shared::types::RoomState::InProgress;
-                (
-                    room.game_type,
-                    room.settings.clone(),
-                    room.players.iter().map(|p| p.id).collect::<Vec<_>>(),
-                )
+
+                let mut player_ids: Vec<PlayerId> =
+                    room.players.iter().map(|p| p.id).collect();
+                if room.first_player_offset == 1 && player_ids.len() == 2 {
+                    player_ids.swap(0, 1);
+                }
+                (room.game_type, room.settings.clone(), player_ids)
             })
         };
 
