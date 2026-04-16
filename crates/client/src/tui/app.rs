@@ -597,9 +597,12 @@ mod tests {
         // Player places at (0,0)
         app.play_solo_move(0, 0);
         let state = app.game_state.as_ref().unwrap();
-        // Player's move + bot's response = 2 moves
+        // If player went first: player + bot = 2 moves.
+        // If bot went first: bot (start) + player + bot = 3 moves.
+        let player_went_first = app.solo_player_went_first.unwrap_or(true);
+        let expected_moves = if player_went_first { 2 } else { 3 };
         match state {
-            ClientGameState::TicTacToe(s) => assert_eq!(s.move_count, 2),
+            ClientGameState::TicTacToe(s) => assert_eq!(s.move_count, expected_moves),
             _ => panic!("expected TicTacToe state"),
         }
     }
@@ -608,10 +611,11 @@ mod tests {
     fn solo_rematch_resets_game() {
         let mut app = test_app();
         app.start_solo_game(Difficulty::Easy);
-        // Play until bot responds
+        // Play a move (may be rejected if bot went first and took that cell).
+        // Either way, at least 1 move has been made (bot's opening or player's).
         app.play_solo_move(0, 0);
         match app.game_state.as_ref().unwrap() {
-            ClientGameState::TicTacToe(s) => assert!(s.move_count >= 2),
+            ClientGameState::TicTacToe(s) => assert!(s.move_count >= 1),
             _ => panic!("expected TicTacToe state"),
         }
 
@@ -620,8 +624,12 @@ mod tests {
         app.rematch_solo();
 
         assert!(app.game_over.is_none());
+        // If player went first after rematch: move_count = 0.
+        // If bot went first: bot already made its opening move, move_count = 1.
+        let player_went_first = app.solo_player_went_first.unwrap_or(true);
+        let expected_moves = if player_went_first { 0 } else { 1 };
         match app.game_state.as_ref().unwrap() {
-            ClientGameState::TicTacToe(s) => assert_eq!(s.move_count, 0),
+            ClientGameState::TicTacToe(s) => assert_eq!(s.move_count, expected_moves),
             _ => panic!("expected TicTacToe state"),
         }
         assert_eq!(app.screen, Screen::InGame);
@@ -642,8 +650,12 @@ mod tests {
         assert!(matches!(app.game_state, Some(ClientGameState::Connect4(_))));
         // Play a move in center column
         app.play_solo_move(0, 3);
+        // If player went first: player + bot = 2 moves.
+        // If bot went first: bot (start) + player + bot = 3 moves.
+        let player_went_first = app.solo_player_went_first.unwrap_or(true);
+        let expected_moves = if player_went_first { 2 } else { 3 };
         match app.game_state.as_ref().unwrap() {
-            ClientGameState::Connect4(s) => assert_eq!(s.move_count, 2),
+            ClientGameState::Connect4(s) => assert_eq!(s.move_count, expected_moves),
             _ => panic!("expected Connect4 state"),
         }
     }
