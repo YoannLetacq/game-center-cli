@@ -79,7 +79,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // Footer
-    let footer_text = if app.game_over.is_some() {
+    let footer_text = if app.rematch_pending {
+        format!("Waiting for opponent... | Esc: {}", t.get("game.leave"))
+    } else if app.rematch_incoming {
+        format!("Y: Accept rematch | N: Decline | Esc: {}", t.get("game.leave"))
+    } else if app.game_over.is_some() {
         format!(
             "R: {} | Esc: {} | I: Help",
             t.get("game.rematch"),
@@ -98,6 +102,10 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     if app.show_help {
         render_help_modal(frame, app);
+    }
+
+    if app.rematch_pending || app.rematch_incoming {
+        super::render_rematch_overlay(frame, app);
     }
 }
 

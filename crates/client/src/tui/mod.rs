@@ -117,6 +117,16 @@ fn handle_net_event(app: &mut App, event: NetEvent, net: &NetworkClient) {
         NetEvent::PlayerLeft(player_id) => {
             app.on_player_left(player_id);
         }
+        NetEvent::RematchRequested => {
+            app.rematch_incoming = true;
+        }
+        NetEvent::RematchAccepted => {
+            app.on_rematch_accepted();
+        }
+        NetEvent::RematchDeclined => {
+            app.on_rematch_declined();
+            let _ = net.send(NetCommand::ListRooms);
+        }
         NetEvent::Error(msg) => {
             // Route error to the right screen
             match app.screen {
@@ -136,6 +146,10 @@ fn handle_net_event(app: &mut App, event: NetEvent, net: &NetworkClient) {
 
 fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, net: &NetworkClient) {
     if code == KeyCode::Esc {
+        if app.show_help {
+            app.show_help = false;
+            return;
+        }
         match app.screen {
             Screen::InGame if app.game_mode != GameMode::Online => {
                 app.leave_solo_game();
@@ -158,11 +172,20 @@ fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, net: &Netwo
         return;
     }
 
+    if app.screen == Screen::InGame && (code == KeyCode::Char('i') || code == KeyCode::Char('I')) {
+        app.show_help = !app.show_help;
+        return;
+    }
+
     match app.screen {
         Screen::Login => handle_login_key(app, code, net),
         Screen::Lobby => handle_lobby_key(app, code, net),
         Screen::Room => {}
-        Screen::InGame => handle_game_key(app, code, net),
+        Screen::InGame => {
+            if !app.show_help {
+                handle_game_key(app, code, net);
+            }
+        }
     }
 }
 
@@ -380,10 +403,29 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
 fn handle_game_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
     // When game is over, only allow rematch or leave
     if app.game_over.is_some() {
+        // Incoming rematch modal: Y/N only
+        if app.rematch_incoming {
+            match code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    app.rematch_incoming = false;
+                    let _ = net.send(NetCommand::RematchResponse { accept: true });
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') => {
+                    app.rematch_incoming = false;
+                    let _ = net.send(NetCommand::RematchResponse { accept: false });
+                }
+                _ => {}
+            }
+            return;
+        }
+
         match code {
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 if matches!(app.game_mode, GameMode::Solo { .. }) {
                     app.rematch_solo();
+                } else if !app.rematch_pending {
+                    app.rematch_pending = true;
+                    let _ = net.send(NetCommand::RequestRematch);
                 }
             }
             _ => {}

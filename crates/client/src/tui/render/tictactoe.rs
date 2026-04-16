@@ -71,7 +71,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // Footer
-    let footer_text = if app.game_over.is_some() {
+    let footer_text = if app.rematch_pending {
+        format!("Waiting for opponent... | Esc: {}", t.get("game.leave"))
+    } else if app.rematch_incoming {
+        format!("Y: Accept rematch | N: Decline | Esc: {}", t.get("game.leave"))
+    } else if app.game_over.is_some() {
         format!(
             "R: {} | Esc: {}",
             t.get("game.rematch"),
@@ -87,6 +91,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         .alignment(Alignment::Center)
         .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(footer, chunks[2]);
+
+    if app.rematch_pending || app.rematch_incoming {
+        super::render_rematch_overlay(frame, app);
+    }
 }
 
 fn render_board(

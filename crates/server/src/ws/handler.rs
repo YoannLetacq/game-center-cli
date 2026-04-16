@@ -475,6 +475,111 @@ async fn handle_client_msg(
                 broadcasts,
             }
         }
+        ClientMsg::RequestRematch => {
+            let player_id = match session.player_id {
+                Some(id) => id,
+                None => {
+                    return HandleResult::reply(ServerMsg::AuthFail {
+                        reason: "not authenticated".to_string(),
+                    });
+                }
+            };
+            let room_id = match session.current_room {
+                Some(id) => id,
+                None => {
+                    return HandleResult::reply(ServerMsg::Error {
+                        code: 400,
+                        message: "not in a room".to_string(),
+                    });
+                }
+            };
+
+            let room_players = state.lobby.get_room_players(room_id).await.unwrap_or_default();
+            let broadcasts = room_players
+                .iter()
+                .filter(|p| p.id != player_id)
+                .map(|p| (p.id, ServerMsg::RematchRequested))
+                .collect();
+
+            HandleResult {
+                response: None,
+                broadcasts,
+            }
+        }
+        ClientMsg::RematchResponse { accept } => {
+            let _player_id = match session.player_id {
+                Some(id) => id,
+                None => {
+                    return HandleResult::reply(ServerMsg::AuthFail {
+                        reason: "not authenticated".to_string(),
+                    });
+                }
+            };
+            let room_id = match session.current_room {
+                Some(id) => id,
+                None => {
+                    return HandleResult::reply(ServerMsg::Error {
+                        code: 400,
+                        message: "not in a room".to_string(),
+                    });
+                }
+            };
+
+            let room_players = state.lobby.get_room_players(room_id).await.unwrap_or_default();
+
+            if *accept {
+                state.lobby.start_game(room_id).await;
+
+                let state_data = {
+                    let games = state.lobby.games.read().await;
+                    games.get(&room_id).map(|g| g.encode_state())
+                };
+
+                match state_data {
+                    Some(state_data) => {
+                        let broadcasts = room_players
+                            .iter()
+                            .flat_map(|p| {
+                                vec![
+                                    (p.id, ServerMsg::RematchAccepted),
+                                    (
+                                        p.id,
+                                        ServerMsg::GameStateUpdate {
+                                            tick: 0,
+                                            state_data: state_data.clone(),
+                                        },
+                                    ),
+                                ]
+                            })
+                            .collect();
+                        HandleResult {
+                            response: None,
+                            broadcasts,
+                        }
+                    }
+                    None => HandleResult::reply(ServerMsg::Error {
+                        code: 500,
+                        message: "failed to start rematch".to_string(),
+                    }),
+                }
+            } else {
+                // Broadcast decline to all players, then clean up the room
+                let broadcasts = room_players
+                    .iter()
+                    .map(|p| (p.id, ServerMsg::RematchDeclined))
+                    .collect();
+
+                for p in &room_players {
+                    state.lobby.leave_room(p.id).await;
+                }
+                session.current_room = None;
+
+                HandleResult {
+                    response: None,
+                    broadcasts,
+                }
+            }
+        }
         _ => {
             if !session.authenticated {
                 HandleResult::reply(ServerMsg::AuthFail {
