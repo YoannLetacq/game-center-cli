@@ -9,7 +9,7 @@ Play classic games against a bot locally or against other players online.
 | Game | Status | Solo vs Bot | Online Multiplayer |
 |------|--------|-------------|-------------------|
 | Tic-Tac-Toe | Available | Easy / Hard (minimax) | 2 players |
-| Connect 4 | In progress | Easy / Hard (alpha-beta depth 6) | 2 players |
+| Connect 4 | Available | Easy / Hard (alpha-beta depth 6) | 2 players |
 | Checkers | Planned | - | - |
 | Chess | Planned | - | - |
 | Snake | Planned | - | - |
@@ -76,6 +76,14 @@ Register or login, then create or join a room from the lobby.
 |-----|--------|
 | **Arrow keys** | Move cursor |
 | **Enter** | Place piece |
+| **R** | Rematch (after game over) |
+| **Esc** | Leave game |
+
+### In Game (Connect 4)
+| Key | Action |
+|-----|--------|
+| **Left/Right** | Move cursor |
+| **Enter** | Drop piece |
 | **R** | Rematch (after game over) |
 | **Esc** | Leave game |
 

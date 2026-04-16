@@ -38,7 +38,10 @@ pub fn run(mut app: App) -> io::Result<()> {
             Screen::Login => screens::login::render(frame, &app),
             Screen::Lobby => screens::lobby::render(frame, &app),
             Screen::Room => screens::room::render(frame, &app),
-            Screen::InGame => render::tictactoe::render(frame, &app),
+            Screen::InGame => match &app.game_state {
+                Some(app::ClientGameState::Connect4(_)) => render::connect4::render(frame, &app),
+                _ => render::tictactoe::render(frame, &app),
+            },
         })?;
 
         // Process network events (non-blocking)
@@ -114,6 +117,16 @@ fn handle_net_event(app: &mut App, event: NetEvent, net: &NetworkClient) {
         NetEvent::PlayerLeft(player_id) => {
             app.on_player_left(player_id);
         }
+        NetEvent::RematchRequested => {
+            app.rematch_incoming = true;
+        }
+        NetEvent::RematchAccepted => {
+            app.on_rematch_accepted();
+        }
+        NetEvent::RematchDeclined => {
+            app.on_rematch_declined();
+            let _ = net.send(NetCommand::ListRooms);
+        }
         NetEvent::Error(msg) => {
             // Route error to the right screen
             match app.screen {
@@ -133,6 +146,10 @@ fn handle_net_event(app: &mut App, event: NetEvent, net: &NetworkClient) {
 
 fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, net: &NetworkClient) {
     if code == KeyCode::Esc {
+        if app.show_help {
+            app.show_help = false;
+            return;
+        }
         match app.screen {
             Screen::InGame if app.game_mode != GameMode::Online => {
                 app.leave_solo_game();
@@ -155,11 +172,20 @@ fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, net: &Netwo
         return;
     }
 
+    if app.screen == Screen::InGame && (code == KeyCode::Char('i') || code == KeyCode::Char('I')) {
+        app.show_help = !app.show_help;
+        return;
+    }
+
     match app.screen {
         Screen::Login => handle_login_key(app, code, net),
         Screen::Lobby => handle_lobby_key(app, code, net),
         Screen::Room => {}
-        Screen::InGame => handle_game_key(app, code, net),
+        Screen::InGame => {
+            if !app.show_help {
+                handle_game_key(app, code, net);
+            }
+        }
     }
 }
 
@@ -168,9 +194,52 @@ fn handle_login_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         return;
     }
 
+    // Sub-state: solo game selection on login screen
+    if app.selecting_solo_game {
+        match code {
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                app.selected_game_type = gc_shared::types::GameType::TicTacToe;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                app.selected_game_type = gc_shared::types::GameType::Connect4;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
+            KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
+                app.selecting_solo_game = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Sub-state: solo difficulty selection on login screen
+    if app.selecting_difficulty {
+        match code {
+            KeyCode::Char('e') | KeyCode::Char('E') => {
+                app.selecting_difficulty = false;
+                app.start_solo_game(gc_shared::types::Difficulty::Easy);
+            }
+            KeyCode::Char('h') | KeyCode::Char('H') => {
+                app.selecting_difficulty = false;
+                app.start_solo_game(gc_shared::types::Difficulty::Hard);
+            }
+            KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
+                app.selecting_difficulty = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match code {
         KeyCode::Tab => app.toggle_field(),
         KeyCode::F(2) => app.toggle_login_mode(),
+        KeyCode::F(3) => {
+            app.selecting_solo_game = true;
+        }
         KeyCode::Enter => {
             if let Some(err) = app.validate_login_form() {
                 app.login_error = Some(err);
@@ -215,6 +284,62 @@ fn handle_login_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
 fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
     app.status_error = None; // Clear error on any key press
 
+    // Sub-state: solo game selection on lobby screen
+    if app.selecting_solo_game {
+        match code {
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                app.selected_game_type = gc_shared::types::GameType::TicTacToe;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                app.selected_game_type = gc_shared::types::GameType::Connect4;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
+            KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
+                app.selecting_solo_game = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Sub-state: multiplayer game selection on lobby screen
+    if app.selecting_multiplayer_game {
+        match code {
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                app.selected_game_type = gc_shared::types::GameType::TicTacToe;
+                app.selecting_multiplayer_game = false;
+
+                let settings = gc_shared::types::GameSettings::default();
+                app.current_game_type = app.selected_game_type;
+                app.current_max_players = settings.max_players;
+                let _ = net.send(NetCommand::CreateRoom {
+                    game_type: app.selected_game_type,
+                    settings,
+                });
+            }
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                app.selected_game_type = gc_shared::types::GameType::Connect4;
+                app.selecting_multiplayer_game = false;
+
+                let settings = gc_shared::types::GameSettings::default();
+                app.current_game_type = app.selected_game_type;
+                app.current_max_players = settings.max_players;
+                let _ = net.send(NetCommand::CreateRoom {
+                    game_type: app.selected_game_type,
+                    settings,
+                });
+            }
+            KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
+                app.selecting_multiplayer_game = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // Sub-state: difficulty selection
     if app.selecting_difficulty {
         match code {
@@ -239,17 +364,19 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         KeyCode::Char('r') | KeyCode::Char('R') => {
             let _ = net.send(NetCommand::ListRooms);
         }
+        KeyCode::Char('g') | KeyCode::Char('G') => {
+            // Cycle through available game types
+            app.selected_game_type = match app.selected_game_type {
+                gc_shared::types::GameType::TicTacToe => gc_shared::types::GameType::Connect4,
+                gc_shared::types::GameType::Connect4 => gc_shared::types::GameType::TicTacToe,
+                _ => gc_shared::types::GameType::TicTacToe,
+            };
+        }
         KeyCode::Char('c') | KeyCode::Char('C') => {
-            let settings = gc_shared::types::GameSettings::default();
-            app.current_game_type = gc_shared::types::GameType::TicTacToe;
-            app.current_max_players = settings.max_players;
-            let _ = net.send(NetCommand::CreateRoom {
-                game_type: gc_shared::types::GameType::TicTacToe,
-                settings,
-            });
+            app.selecting_multiplayer_game = true;
         }
         KeyCode::Char('b') | KeyCode::Char('B') => {
-            app.selecting_difficulty = true;
+            app.selecting_solo_game = true;
         }
         KeyCode::Up => {
             if app.selected_room > 0 {
@@ -263,6 +390,7 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         }
         KeyCode::Enter => {
             if let Some(room) = app.rooms.get(app.selected_room) {
+                app.selected_game_type = room.game_type;
                 app.current_game_type = room.game_type;
                 app.current_max_players = room.max_players;
                 let _ = net.send(NetCommand::JoinRoom { room_id: room.id });
@@ -275,23 +403,48 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
 fn handle_game_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
     // When game is over, only allow rematch or leave
     if app.game_over.is_some() {
+        // Incoming rematch modal: Y/N only
+        if app.rematch_incoming {
+            match code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    app.rematch_incoming = false;
+                    let _ = net.send(NetCommand::RematchResponse { accept: true });
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') => {
+                    app.rematch_incoming = false;
+                    let _ = net.send(NetCommand::RematchResponse { accept: false });
+                }
+                _ => {}
+            }
+            return;
+        }
+
         match code {
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 if matches!(app.game_mode, GameMode::Solo { .. }) {
                     app.rematch_solo();
+                } else if !app.rematch_pending {
+                    app.rematch_pending = true;
+                    let _ = net.send(NetCommand::RequestRematch);
                 }
-                // Online rematch: TODO in later phase
             }
-            _ => {} // Esc is handled in handle_key before this function
+            _ => {}
         }
         return;
     }
 
-    let is_our_turn = app
-        .game_state
-        .as_ref()
-        .is_some_and(|s| Some(s.players[s.current_turn]) == app.my_player_id);
+    // Dispatch cursor movement based on game type
+    match &app.game_state {
+        Some(app::ClientGameState::Connect4(_)) => {
+            handle_connect4_key(app, code, net);
+        }
+        _ => {
+            handle_tictactoe_key(app, code, net);
+        }
+    }
+}
 
+fn handle_tictactoe_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
     match code {
         KeyCode::Up => {
             if app.cursor_row > 0 {
@@ -314,7 +467,7 @@ fn handle_game_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
             }
         }
         KeyCode::Enter => {
-            if is_our_turn {
+            if app.is_our_turn() {
                 match &app.game_mode {
                     GameMode::Solo { .. } => {
                         app.play_solo_move(app.cursor_row, app.cursor_col);
@@ -322,6 +475,40 @@ fn handle_game_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                     GameMode::Online => {
                         let mv = gc_shared::game::tictactoe::TicTacToeMove {
                             row: app.cursor_row,
+                            col: app.cursor_col,
+                        };
+                        if let Ok(data) = gc_shared::protocol::codec::encode(&mv) {
+                            let _ = net.send(NetCommand::GameAction { data });
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_connect4_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
+    use gc_shared::game::connect4::COLS;
+    match code {
+        KeyCode::Left => {
+            if app.cursor_col > 0 {
+                app.cursor_col -= 1;
+            }
+        }
+        KeyCode::Right => {
+            if app.cursor_col < COLS as u8 - 1 {
+                app.cursor_col += 1;
+            }
+        }
+        KeyCode::Enter => {
+            if app.is_our_turn() {
+                match &app.game_mode {
+                    GameMode::Solo { .. } => {
+                        app.play_solo_move(0, app.cursor_col);
+                    }
+                    GameMode::Online => {
+                        let mv = gc_shared::game::connect4::Connect4Move {
                             col: app.cursor_col,
                         };
                         if let Ok(data) = gc_shared::protocol::codec::encode(&mv) {

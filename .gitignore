@@ -10,3 +10,4 @@ server.toml
 *.db-wal
 .claude
 CLAUDE.md
+ressources/

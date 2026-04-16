@@ -1,4 +1,5 @@
-use gc_shared::game::tictactoe::{TicTacToe, TicTacToeMove, TicTacToeState};
+use gc_shared::game::connect4::{Connect4, Connect4State};
+use gc_shared::game::tictactoe::{TicTacToe, TicTacToeState};
 use gc_shared::game::traits::GameEngine;
 use gc_shared::protocol::codec;
 use gc_shared::protocol::messages::ServerMsg;
@@ -16,12 +17,13 @@ pub struct TurnBasedGame {
 /// Type-erased game state wrapper.
 pub enum GameState {
     TicTacToe(TicTacToeState),
+    Connect4(Connect4State),
 }
 
 impl TurnBasedGame {
     /// Check if a game type is currently implemented.
     pub fn is_supported(game_type: GameType) -> bool {
-        matches!(game_type, GameType::TicTacToe)
+        matches!(game_type, GameType::TicTacToe | GameType::Connect4)
     }
 
     /// Create a new game for the given type and players.
@@ -30,7 +32,7 @@ impl TurnBasedGame {
             GameType::TicTacToe => {
                 GameState::TicTacToe(TicTacToe::initial_state(players, settings))
             }
-            // Other turn-based games will be added in Phase 5
+            GameType::Connect4 => GameState::Connect4(Connect4::initial_state(players, settings)),
             _ => return None,
         };
 
@@ -49,63 +51,45 @@ impl TurnBasedGame {
         player: PlayerId,
         action_data: &[u8],
     ) -> (ServerMsg, Vec<(PlayerId, ServerMsg)>) {
-        let GameState::TicTacToe(ref mut state) = self.state;
-
-        // Decode the move
-        let mv: TicTacToeMove = match codec::decode(action_data) {
-            Ok(m) => m,
-            Err(e) => {
-                return (
-                    ServerMsg::Error {
-                        code: 400,
-                        message: format!("invalid move data: {e}"),
-                    },
-                    Vec::new(),
-                );
+        // Decode, validate, apply — dispatched by game type
+        let state_bytes = match self.state {
+            GameState::TicTacToe(ref mut state) => {
+                apply_typed_action::<TicTacToe>(state, player, action_data)
+            }
+            GameState::Connect4(ref mut state) => {
+                apply_typed_action::<Connect4>(state, player, action_data)
             }
         };
 
-        // Validate
-        if let Err(reason) = TicTacToe::validate_move(state, player, &mv) {
-            return (
-                ServerMsg::Error {
-                    code: 400,
-                    message: reason,
-                },
-                Vec::new(),
-            );
-        }
+        let state_bytes = match state_bytes {
+            Ok(v) => v,
+            Err(resp) => return (resp, Vec::new()),
+        };
 
-        // Apply move in-place (no clone)
-        TicTacToe::apply_move(state, player, &mv);
-
-        // Encode state for broadcast
-        let state_bytes = codec::encode(&state).unwrap_or_default();
-        let tick = state.move_count as u64;
-
-        // Build the state update message (same for response and broadcasts)
+        let tick = self.move_count();
         let state_msg = ServerMsg::GameStateUpdate {
             tick,
             state_data: state_bytes,
         };
 
-        // Broadcasts go to OTHER players only (acting player gets the direct response)
-        let others: Vec<PlayerId> = self
+        // Broadcasts go to OTHER players only
+        let mut broadcasts: Vec<(PlayerId, ServerMsg)> = self
             .players
             .iter()
             .filter(|&&pid| pid != player)
-            .copied()
+            .map(|&pid| (pid, state_msg.clone()))
             .collect();
 
-        let mut broadcasts: Vec<(PlayerId, ServerMsg)> =
-            others.iter().map(|&pid| (pid, state_msg.clone())).collect();
-
         // Check for game over
-        if let Some(outcome) = TicTacToe::is_terminal(state) {
-            self.finished = true;
-            info!(game_type = ?self.game_type, ?outcome, "game finished");
+        let outcome = match &self.state {
+            GameState::TicTacToe(state) => TicTacToe::is_terminal(state),
+            GameState::Connect4(state) => Connect4::is_terminal(state),
+        };
 
-            // Send GameOver to ALL players (acting player via broadcast too)
+        if let Some(outcome) = outcome {
+            self.finished = true;
+            info!(game_type = ?self.game_type, ?outcome, tick, "game finished");
+
             for &pid in &self.players {
                 broadcasts.push((
                     pid,
@@ -119,11 +103,20 @@ impl TurnBasedGame {
         (state_msg, broadcasts)
     }
 
+    /// Get the current move count.
+    fn move_count(&self) -> u64 {
+        match &self.state {
+            GameState::TicTacToe(state) => state.move_count as u64,
+            GameState::Connect4(state) => state.move_count as u64,
+        }
+    }
+
     /// Get the current player whose turn it is.
     #[allow(dead_code)]
     pub fn current_player(&self) -> Option<PlayerId> {
         match &self.state {
             GameState::TicTacToe(state) => Some(TicTacToe::current_player(state)),
+            GameState::Connect4(state) => Some(Connect4::current_player(state)),
         }
     }
 
@@ -131,8 +124,34 @@ impl TurnBasedGame {
     pub fn encode_state(&self) -> Vec<u8> {
         match &self.state {
             GameState::TicTacToe(state) => codec::encode(state).unwrap_or_default(),
+            GameState::Connect4(state) => codec::encode(state).unwrap_or_default(),
         }
     }
+}
+
+/// Generic helper: decode, validate, apply a move for any GameEngine.
+/// Returns Ok(encoded_state) or Err(error_msg).
+fn apply_typed_action<G: GameEngine>(
+    state: &mut G::State,
+    player: PlayerId,
+    action_data: &[u8],
+) -> Result<Vec<u8>, ServerMsg>
+where
+    G::State: serde::Serialize,
+{
+    let mv: G::Move = codec::decode(action_data).map_err(|e| ServerMsg::Error {
+        code: 400,
+        message: format!("invalid move data: {e}"),
+    })?;
+
+    G::validate_move(state, player, &mv).map_err(|reason| ServerMsg::Error {
+        code: 400,
+        message: reason,
+    })?;
+
+    G::apply_move(state, player, &mv);
+
+    Ok(codec::encode(state).unwrap_or_default())
 }
 
 #[cfg(test)]

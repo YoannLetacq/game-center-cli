@@ -19,6 +19,7 @@ error_empty_username = "Username is required"
 error_short_password = "Password must be at least 8 characters"
 connecting = "Connecting..."
 authenticating = "Authenticating..."
+play_solo = "Play Solo (offline)"
 
 [lobby]
 title = "Lobby"
