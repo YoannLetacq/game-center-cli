@@ -136,8 +136,7 @@ impl LobbyManager {
                 room.games_played += 1;
                 room.state = gc_shared::types::RoomState::InProgress;
 
-                let mut player_ids: Vec<PlayerId> =
-                    room.players.iter().map(|p| p.id).collect();
+                let mut player_ids: Vec<PlayerId> = room.players.iter().map(|p| p.id).collect();
                 if room.first_player_offset == 1 && player_ids.len() == 2 {
                     player_ids.swap(0, 1);
                 }

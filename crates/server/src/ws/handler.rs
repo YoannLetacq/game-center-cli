@@ -494,7 +494,11 @@ async fn handle_client_msg(
                 }
             };
 
-            let room_players = state.lobby.get_room_players(room_id).await.unwrap_or_default();
+            let room_players = state
+                .lobby
+                .get_room_players(room_id)
+                .await
+                .unwrap_or_default();
             let broadcasts = room_players
                 .iter()
                 .filter(|p| p.id != player_id)
@@ -525,7 +529,11 @@ async fn handle_client_msg(
                 }
             };
 
-            let room_players = state.lobby.get_room_players(room_id).await.unwrap_or_default();
+            let room_players = state
+                .lobby
+                .get_room_players(room_id)
+                .await
+                .unwrap_or_default();
 
             if *accept {
                 state.lobby.start_game(room_id).await;

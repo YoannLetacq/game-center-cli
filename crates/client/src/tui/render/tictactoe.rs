@@ -74,7 +74,10 @@ pub fn render(frame: &mut Frame, app: &App) {
     let footer_text = if app.rematch_pending {
         format!("Waiting for opponent... | Esc: {}", t.get("game.leave"))
     } else if app.rematch_incoming {
-        format!("Y: Accept rematch | N: Decline | Esc: {}", t.get("game.leave"))
+        format!(
+            "Y: Accept rematch | N: Decline | Esc: {}",
+            t.get("game.leave")
+        )
     } else if app.game_over.is_some() {
         format!(
             "R: {} | Esc: {}",
@@ -160,7 +163,8 @@ fn render_board(
                 } else {
                     Paragraph::new("─".repeat(cols[c].width as usize))
                 };
-                let sep = sep.alignment(Alignment::Center)
+                let sep = sep
+                    .alignment(Alignment::Center)
                     .style(Style::default().fg(Color::DarkGray));
                 frame.render_widget(sep, cols[c]);
             }

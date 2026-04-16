@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Clear};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::tui::app::{App, ClientGameState};
 
@@ -20,10 +20,10 @@ pub fn render(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),           // header
-            Constraint::Length(2),           // column selector
-            Constraint::Min(board_height),   // board
-            Constraint::Length(3),           // footer
+            Constraint::Length(3),         // header
+            Constraint::Length(2),         // column selector
+            Constraint::Min(board_height), // board
+            Constraint::Length(3),         // footer
         ])
         .split(frame.area());
 
@@ -82,7 +82,10 @@ pub fn render(frame: &mut Frame, app: &App) {
     let footer_text = if app.rematch_pending {
         format!("Waiting for opponent... | Esc: {}", t.get("game.leave"))
     } else if app.rematch_incoming {
-        format!("Y: Accept rematch | N: Decline | Esc: {}", t.get("game.leave"))
+        format!(
+            "Y: Accept rematch | N: Decline | Esc: {}",
+            t.get("game.leave")
+        )
     } else if app.game_over.is_some() {
         format!(
             "R: {} | Esc: {} | I: Help",
@@ -114,7 +117,12 @@ fn fixed_board_rect(area: Rect) -> Rect {
     let board_height = (ROWS as u16) * CELL_H + 2;
     let x = area.x + area.width.saturating_sub(board_width) / 2;
     let y = area.y + area.height.saturating_sub(board_height) / 2;
-    Rect::new(x, y, board_width.min(area.width), board_height.min(area.height))
+    Rect::new(
+        x,
+        y,
+        board_width.min(area.width),
+        board_height.min(area.height),
+    )
 }
 
 fn render_column_selector(frame: &mut Frame, cursor_col: u8, board_area: Rect, area: Rect) {
@@ -253,7 +261,7 @@ fn render_help_modal(frame: &mut Frame, app: &App) {
     };
 
     let help_text: Vec<Line> = rules.into_iter().map(|l| Line::from(l)).collect();
-    
+
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
@@ -285,4 +293,3 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         ])
         .split(popup_layout[1])[1]
 }
-
