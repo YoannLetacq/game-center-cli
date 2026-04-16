@@ -44,6 +44,10 @@ pub enum ClientMsg {
         session_id: SessionId,
         last_seq: u64,
     },
+    /// Request a rematch after a game ends.
+    RequestRematch,
+    /// Respond to an incoming rematch request.
+    RematchResponse { accept: bool },
 }
 
 /// Messages sent from server to client.
@@ -86,6 +90,12 @@ pub enum ServerMsg {
         version: String,
         min_client_protocol: u8,
     },
+    /// Opponent has requested a rematch.
+    RematchRequested,
+    /// Rematch accepted — a new GameStateUpdate will follow immediately.
+    RematchAccepted,
+    /// Rematch declined — both players are removed from the room.
+    RematchDeclined,
 }
 
 /// Summary of a room for the lobby list.

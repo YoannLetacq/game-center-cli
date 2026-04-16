@@ -170,16 +170,31 @@ pub async fn handle_connection(tls_stream: TlsStream<TcpStream>, state: Arc<Serv
         state.players.write().await.remove(&player_id);
 
         // Remove from room and notify remaining players
-        if let Some((room_id, _)) = state.lobby.leave_room(player_id).await {
+        if let Some((room_id, _is_empty, game_aborted)) = state.lobby.leave_room(player_id).await {
             info!(%room_id, %player_id, "player removed from room on disconnect");
 
             // Notify remaining room members
             if let Some(room_players) = state.lobby.get_room_players(room_id).await {
                 let leave_msg = ServerMsg::PlayerLeft(player_id);
                 let players = state.players.read().await;
+
+                let remaining_id = if game_aborted {
+                    room_players
+                        .iter()
+                        .find(|p| p.id != player_id)
+                        .map(|p| p.id)
+                } else {
+                    None
+                };
+
                 for p in &room_players {
                     if let Some(tx) = players.get(&p.id) {
                         let _ = tx.send(leave_msg.clone());
+                        if let Some(winner) = remaining_id {
+                            let _ = tx.send(ServerMsg::GameOver {
+                                outcome: gc_shared::types::GameOutcome::Win(winner),
+                            });
+                        }
                     }
                 }
             }
@@ -382,13 +397,28 @@ async fn handle_client_msg(
             };
 
             session.current_room = None;
-            if let Some((_rid, _is_empty)) = state.lobby.leave_room(player_id).await {
+            if let Some((_rid, _is_empty, game_aborted)) = state.lobby.leave_room(player_id).await {
                 // Broadcast PlayerLeft to remaining room members
-                let broadcasts: Vec<(PlayerId, ServerMsg)> = room_players
+                let mut broadcasts: Vec<(PlayerId, ServerMsg)> = room_players
                     .iter()
                     .filter(|p| p.id != player_id)
                     .map(|p| (p.id, ServerMsg::PlayerLeft(player_id)))
                     .collect();
+
+                if game_aborted
+                    && let Some(remaining) = room_players.iter().find(|p| p.id != player_id)
+                {
+                    for p in &room_players {
+                        if p.id != player_id {
+                            broadcasts.push((
+                                p.id,
+                                ServerMsg::GameOver {
+                                    outcome: gc_shared::types::GameOutcome::Win(remaining.id),
+                                },
+                            ));
+                        }
+                    }
+                }
 
                 HandleResult {
                     response: Some(ServerMsg::RoomList(state.lobby.list_rooms().await)),
@@ -420,21 +450,134 @@ async fn handle_client_msg(
                 }
             };
 
-            let mut games = state.lobby.games.write().await;
-            let game = match games.get_mut(&room_id) {
-                Some(g) => g,
+            let (response, broadcasts, is_finished) = {
+                let mut games = state.lobby.games.write().await;
+                let game = match games.get_mut(&room_id) {
+                    Some(g) => g,
+                    None => {
+                        return HandleResult::reply(ServerMsg::Error {
+                            code: 400,
+                            message: "no active game in this room".to_string(),
+                        });
+                    }
+                };
+
+                let (response, broadcasts) = game.apply_action(player_id, data);
+                (response, broadcasts, game.finished)
+            };
+
+            if is_finished {
+                state.lobby.finish_game(room_id).await;
+            }
+
+            HandleResult {
+                response: Some(response),
+                broadcasts,
+            }
+        }
+        ClientMsg::RequestRematch => {
+            let player_id = match session.player_id {
+                Some(id) => id,
+                None => {
+                    return HandleResult::reply(ServerMsg::AuthFail {
+                        reason: "not authenticated".to_string(),
+                    });
+                }
+            };
+            let room_id = match session.current_room {
+                Some(id) => id,
                 None => {
                     return HandleResult::reply(ServerMsg::Error {
                         code: 400,
-                        message: "no active game in this room".to_string(),
+                        message: "not in a room".to_string(),
                     });
                 }
             };
 
-            let (response, broadcasts) = game.apply_action(player_id, data);
+            let room_players = state.lobby.get_room_players(room_id).await.unwrap_or_default();
+            let broadcasts = room_players
+                .iter()
+                .filter(|p| p.id != player_id)
+                .map(|p| (p.id, ServerMsg::RematchRequested))
+                .collect();
+
             HandleResult {
-                response: Some(response),
+                response: None,
                 broadcasts,
+            }
+        }
+        ClientMsg::RematchResponse { accept } => {
+            let _player_id = match session.player_id {
+                Some(id) => id,
+                None => {
+                    return HandleResult::reply(ServerMsg::AuthFail {
+                        reason: "not authenticated".to_string(),
+                    });
+                }
+            };
+            let room_id = match session.current_room {
+                Some(id) => id,
+                None => {
+                    return HandleResult::reply(ServerMsg::Error {
+                        code: 400,
+                        message: "not in a room".to_string(),
+                    });
+                }
+            };
+
+            let room_players = state.lobby.get_room_players(room_id).await.unwrap_or_default();
+
+            if *accept {
+                state.lobby.start_game(room_id).await;
+
+                let state_data = {
+                    let games = state.lobby.games.read().await;
+                    games.get(&room_id).map(|g| g.encode_state())
+                };
+
+                match state_data {
+                    Some(state_data) => {
+                        let broadcasts = room_players
+                            .iter()
+                            .flat_map(|p| {
+                                vec![
+                                    (p.id, ServerMsg::RematchAccepted),
+                                    (
+                                        p.id,
+                                        ServerMsg::GameStateUpdate {
+                                            tick: 0,
+                                            state_data: state_data.clone(),
+                                        },
+                                    ),
+                                ]
+                            })
+                            .collect();
+                        HandleResult {
+                            response: None,
+                            broadcasts,
+                        }
+                    }
+                    None => HandleResult::reply(ServerMsg::Error {
+                        code: 500,
+                        message: "failed to start rematch".to_string(),
+                    }),
+                }
+            } else {
+                // Broadcast decline to all players, then clean up the room
+                let broadcasts = room_players
+                    .iter()
+                    .map(|p| (p.id, ServerMsg::RematchDeclined))
+                    .collect();
+
+                for p in &room_players {
+                    state.lobby.leave_room(p.id).await;
+                }
+                session.current_room = None;
+
+                HandleResult {
+                    response: None,
+                    broadcasts,
+                }
             }
         }
         _ => {

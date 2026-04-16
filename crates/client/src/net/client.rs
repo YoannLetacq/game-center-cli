@@ -37,6 +37,10 @@ pub enum NetCommand {
     GameAction {
         data: Vec<u8>,
     },
+    RequestRematch,
+    RematchResponse {
+        accept: bool,
+    },
     Disconnect,
 }
 
@@ -61,6 +65,12 @@ pub enum NetEvent {
     },
     Error(String),
     Disconnected,
+    /// Opponent has sent a rematch request — show accept/decline modal.
+    RematchRequested,
+    /// Rematch accepted — a new GameStateUpdate follows.
+    RematchAccepted,
+    /// Rematch declined — both players return to lobby.
+    RematchDeclined,
     #[allow(dead_code)]
     ServerMessage(ServerMsg),
 }
@@ -231,6 +241,16 @@ async fn handle_command(
                 let _ = c.send(ClientMsg::LeaveRoom).await;
             }
         }
+        NetCommand::RequestRematch => {
+            if let Some(c) = conn {
+                let _ = c.send(ClientMsg::RequestRematch).await;
+            }
+        }
+        NetCommand::RematchResponse { accept } => {
+            if let Some(c) = conn {
+                let _ = c.send(ClientMsg::RematchResponse { accept }).await;
+            }
+        }
         NetCommand::Disconnect => {
             if let Some(c) = conn {
                 c.close().await;
@@ -313,6 +333,9 @@ fn dispatch_server_msg(msg: ServerMsg, event_tx: &std_mpsc::Sender<NetEvent>) {
         ServerMsg::GameOver { outcome } => NetEvent::GameOver { outcome },
         ServerMsg::Error { message, .. } => NetEvent::Error(message),
         ServerMsg::AuthFail { reason } => NetEvent::Error(reason),
+        ServerMsg::RematchRequested => NetEvent::RematchRequested,
+        ServerMsg::RematchAccepted => NetEvent::RematchAccepted,
+        ServerMsg::RematchDeclined => NetEvent::RematchDeclined,
         other => NetEvent::ServerMessage(other),
     };
     let _ = event_tx.send(event);

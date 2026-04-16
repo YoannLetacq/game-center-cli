@@ -13,6 +13,11 @@ pub struct Room {
     pub host: PlayerId,
     pub created_at: Instant,
     pub last_activity: Instant,
+    /// How many games have been played in this room (0 = not started yet).
+    pub games_played: u32,
+    /// Index into `players` (0 or 1) for who goes first in the current/next game.
+    /// Set randomly on the first game, then toggled on each rematch.
+    pub first_player_offset: u8,
 }
 
 #[allow(dead_code)]
@@ -28,6 +33,8 @@ impl Room {
             host: host_id,
             created_at: Instant::now(),
             last_activity: Instant::now(),
+            games_played: 0,
+            first_player_offset: 0,
         }
     }
 
