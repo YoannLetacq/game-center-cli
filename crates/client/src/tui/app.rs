@@ -292,7 +292,20 @@ impl App {
             id
         });
         let bot_id = PlayerId::new();
-        let players = [player_id, bot_id];
+
+        // First game: pick starting player randomly.
+        // Each rematch: alternate who goes first.
+        let player_goes_first = match self.solo_player_went_first {
+            None => uuid::Uuid::new_v4().as_bytes()[0] & 1 == 0,
+            Some(went_first) => !went_first,
+        };
+        self.solo_player_went_first = Some(player_goes_first);
+
+        let players = if player_goes_first {
+            [player_id, bot_id]
+        } else {
+            [bot_id, player_id]
+        };
         let settings = GameSettings::default();
 
         let state = match self.selected_game_type {
@@ -309,14 +322,34 @@ impl App {
         self.game_state = Some(state);
         self.game_over = None;
         self.cursor_row = match self.selected_game_type {
-            GameType::Connect4 => 0, // cursor not used for row in Connect4
+            GameType::Connect4 => 0,
             _ => 1,
         };
         self.cursor_col = match self.selected_game_type {
-            GameType::Connect4 => 3, // center column
+            GameType::Connect4 => 3,
             _ => 1,
         };
         self.screen = Screen::InGame;
+
+        // If the bot goes first, apply its opening move immediately.
+        if !player_goes_first && let Some(state) = self.game_state.as_mut() {
+            match state {
+                ClientGameState::TicTacToe(s) => {
+                    let bot_mv = tictactoe::bot_move(s, difficulty);
+                    TicTacToe::apply_move(s, bot_id, &bot_mv);
+                    if let Some(outcome) = TicTacToe::is_terminal(s) {
+                        self.game_over = Some(outcome);
+                    }
+                }
+                ClientGameState::Connect4(s) => {
+                    let bot_mv = connect4::bot_move(s, difficulty);
+                    Connect4::apply_move(s, bot_id, &bot_mv);
+                    if let Some(outcome) = Connect4::is_terminal(s) {
+                        self.game_over = Some(outcome);
+                    }
+                }
+            }
+        }
     }
 
     /// Apply a player's move in solo mode, then let the bot respond.

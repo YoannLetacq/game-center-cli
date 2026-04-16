@@ -260,7 +260,7 @@ fn render_help_modal(frame: &mut Frame, app: &App) {
         ),
     };
 
-    let help_text: Vec<Line> = rules.into_iter().map(|l| Line::from(l)).collect();
+    let help_text: Vec<Line> = rules.into_iter().map(Line::from).collect();
 
     let block = Block::default()
         .title(title)
