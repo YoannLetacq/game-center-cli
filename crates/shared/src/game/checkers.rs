@@ -347,13 +347,9 @@ fn any_capture_available(board: &[[Square; BOARD_SIZE]; BOARD_SIZE], side: Side)
     false
 }
 
-/// Public wrapper around [`legal_moves`] so that client code can enumerate
-/// legal moves (e.g. for input validation in the TUI).
-pub fn legal_moves_public(state: &CheckersState) -> Vec<CheckersMove> {
-    legal_moves(state)
-}
-
-pub(crate) fn legal_moves(state: &CheckersState) -> Vec<CheckersMove> {
+/// Enumerate every legal move for the current player.
+/// Used by the client TUI to validate multi-jump input prefixes.
+pub fn legal_moves(state: &CheckersState) -> Vec<CheckersMove> {
     let side = side_for_turn(state.current_turn);
     let mut moves = Vec::new();
     let captures = any_capture_available(&state.board, side);

@@ -671,7 +671,7 @@ impl App {
                     return Some(candidate);
                 }
 
-                let is_prefix = checkers::legal_moves_public(state).iter().any(|m| {
+                let is_prefix = checkers::legal_moves(state).iter().any(|m| {
                     m.path.len() > tentative.len() && m.path[..tentative.len()] == tentative[..]
                 });
                 if is_prefix {
