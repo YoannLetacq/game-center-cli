@@ -31,7 +31,7 @@ impl JwtManager {
     }
 
     pub fn create_token(&self, user_id: &str, username: &str) -> Result<(String, i64), String> {
-        let now = chrono_now();
+        let now = chrono_now()?;
         let exp = now + self.expiry_secs;
 
         let claims = Claims {
@@ -58,11 +58,11 @@ impl JwtManager {
 }
 
 /// Current unix timestamp in seconds.
-fn chrono_now() -> i64 {
+fn chrono_now() -> Result<i64, String> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock before epoch")
-        .as_secs() as i64
+        .map(|d| d.as_secs() as i64)
+        .map_err(|e| format!("system clock before unix epoch: {e}"))
 }
 
 #[cfg(test)]
@@ -81,7 +81,7 @@ mod tests {
         let (token, exp) = mgr.create_token("user-123", "alice").unwrap();
 
         assert!(!token.is_empty());
-        assert!(exp > chrono_now());
+        assert!(exp > chrono_now().unwrap());
 
         let claims = mgr.validate_token(&token).unwrap();
         assert_eq!(claims.sub, "user-123");
