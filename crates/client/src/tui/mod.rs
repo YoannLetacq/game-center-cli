@@ -34,14 +34,30 @@ pub fn run(mut app: App) -> io::Result<()> {
     // Main loop
     while app.running {
         // Draw
-        terminal.draw(|frame| match app.screen {
-            Screen::Login => screens::login::render(frame, &app),
-            Screen::Lobby => screens::lobby::render(frame, &app),
-            Screen::Room => screens::room::render(frame, &app),
-            Screen::InGame => match &app.game_state {
-                Some(app::ClientGameState::Connect4(_)) => render::connect4::render(frame, &app),
-                _ => render::tictactoe::render(frame, &app),
-            },
+        terminal.draw(|frame| {
+            let area = frame.area();
+            match render::terminal_fit::check_fit(area) {
+                render::terminal_fit::TerminalFit::TooSmall => {
+                    render::terminal_fit::render_too_small(frame, area);
+                    return;
+                }
+                render::terminal_fit::TerminalFit::Edge => {
+                    render::terminal_fit::render_edge_icon(frame, area);
+                    return;
+                }
+                render::terminal_fit::TerminalFit::Ok => {}
+            }
+            match app.screen {
+                Screen::Login => screens::login::render(frame, &app),
+                Screen::Lobby => screens::lobby::render(frame, &app),
+                Screen::Room => screens::room::render(frame, &app),
+                Screen::InGame => match &app.game_state {
+                    Some(app::ClientGameState::Connect4(_)) => {
+                        render::connect4::render(frame, &app)
+                    }
+                    _ => render::tictactoe::render(frame, &app),
+                },
+            }
         })?;
 
         // Process network events (non-blocking)
