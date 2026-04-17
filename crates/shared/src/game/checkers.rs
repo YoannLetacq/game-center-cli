@@ -347,6 +347,12 @@ fn any_capture_available(board: &[[Square; BOARD_SIZE]; BOARD_SIZE], side: Side)
     false
 }
 
+/// Public wrapper around [`legal_moves`] so that client code can enumerate
+/// legal moves (e.g. for input validation in the TUI).
+pub fn legal_moves_public(state: &CheckersState) -> Vec<CheckersMove> {
+    legal_moves(state)
+}
+
 pub(crate) fn legal_moves(state: &CheckersState) -> Vec<CheckersMove> {
     let side = side_for_turn(state.current_turn);
     let mut moves = Vec::new();
@@ -499,7 +505,7 @@ fn best_move(state: &CheckersState) -> CheckersMove {
     for mv in &moves {
         let mut next = state.clone();
         Checkers::apply_move(&mut next, state.players[state.current_turn], mv);
-        let score = alpha_beta(&next, 5, i32::MIN, i32::MAX, !maximizing);
+        let score = alpha_beta(&next, 6, i32::MIN, i32::MAX, !maximizing);
         let better = if maximizing {
             score > best_score
         } else {

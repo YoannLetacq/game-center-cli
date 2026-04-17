@@ -40,6 +40,7 @@ pub fn run(mut app: App) -> io::Result<()> {
             Screen::Room => screens::room::render(frame, &app),
             Screen::InGame => match &app.game_state {
                 Some(app::ClientGameState::Connect4(_)) => render::connect4::render(frame, &app),
+                Some(app::ClientGameState::Checkers(_)) => render::checkers::render(frame, &app),
                 _ => render::tictactoe::render(frame, &app),
             },
         })?;
@@ -368,7 +369,8 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
             // Cycle through available game types
             app.selected_game_type = match app.selected_game_type {
                 gc_shared::types::GameType::TicTacToe => gc_shared::types::GameType::Connect4,
-                gc_shared::types::GameType::Connect4 => gc_shared::types::GameType::TicTacToe,
+                gc_shared::types::GameType::Connect4 => gc_shared::types::GameType::Checkers,
+                gc_shared::types::GameType::Checkers => gc_shared::types::GameType::TicTacToe,
                 _ => gc_shared::types::GameType::TicTacToe,
             };
         }
@@ -438,9 +440,34 @@ fn handle_game_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         Some(app::ClientGameState::Connect4(_)) => {
             handle_connect4_key(app, code, net);
         }
+        Some(app::ClientGameState::Checkers(_)) => {
+            handle_checkers_key(app, code, net);
+        }
         _ => {
             handle_tictactoe_key(app, code, net);
         }
+    }
+}
+
+fn handle_checkers_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
+    match code {
+        KeyCode::Up => app.checkers_cursor_step(-1, 0),
+        KeyCode::Down => app.checkers_cursor_step(1, 0),
+        KeyCode::Left => app.checkers_cursor_step(0, -1),
+        KeyCode::Right => app.checkers_cursor_step(0, 1),
+        KeyCode::Backspace => app.checkers_cancel_selection(),
+        KeyCode::Enter => {
+            if !app.is_our_turn() {
+                return;
+            }
+            if let Some(mv) = app.checkers_confirm()
+                && matches!(app.game_mode, app::GameMode::Online)
+                && let Ok(data) = gc_shared::protocol::codec::encode(&mv)
+            {
+                let _ = net.send(NetCommand::GameAction { data });
+            }
+        }
+        _ => {}
     }
 }
 
