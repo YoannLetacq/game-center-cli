@@ -208,6 +208,11 @@ fn handle_login_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                 app.selecting_solo_game = false;
                 app.selecting_difficulty = true;
             }
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                app.selected_game_type = gc_shared::types::GameType::Checkers;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
             KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
                 app.selecting_solo_game = false;
             }
@@ -298,6 +303,11 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                 app.selecting_solo_game = false;
                 app.selecting_difficulty = true;
             }
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                app.selected_game_type = gc_shared::types::GameType::Checkers;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
             KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
                 app.selecting_solo_game = false;
             }
@@ -323,6 +333,18 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
             }
             KeyCode::Char('c') | KeyCode::Char('C') => {
                 app.selected_game_type = gc_shared::types::GameType::Connect4;
+                app.selecting_multiplayer_game = false;
+
+                let settings = gc_shared::types::GameSettings::default();
+                app.current_game_type = app.selected_game_type;
+                app.current_max_players = settings.max_players;
+                let _ = net.send(NetCommand::CreateRoom {
+                    game_type: app.selected_game_type,
+                    settings,
+                });
+            }
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                app.selected_game_type = gc_shared::types::GameType::Checkers;
                 app.selecting_multiplayer_game = false;
 
                 let settings = gc_shared::types::GameSettings::default();
