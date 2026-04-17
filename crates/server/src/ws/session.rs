@@ -12,6 +12,8 @@ pub struct Session {
     pub username: Option<String>,
     pub authenticated: bool,
     pub seq: u64,
+    /// Last client-supplied seq observed on this session. Rejects replays/reordering.
+    last_client_seq: u64,
     /// Ring buffer of recent server messages for reconnection replay.
     recent_messages: VecDeque<(u64, ServerMsg)>,
     /// When the session was last active.
@@ -31,6 +33,7 @@ impl Session {
             username: None,
             authenticated: false,
             seq: 0,
+            last_client_seq: 0,
             recent_messages: VecDeque::with_capacity(100),
             last_active: Instant::now(),
             max_buffer: 100,
@@ -60,6 +63,16 @@ impl Session {
     pub fn next_seq(&mut self) -> u64 {
         self.seq += 1;
         self.seq
+    }
+
+    /// Accept an inbound client seq if it is strictly greater than the last observed.
+    /// Rejects replays and out-of-order messages. Returns true if accepted.
+    pub fn observe_client_seq(&mut self, seq: u64) -> bool {
+        if seq <= self.last_client_seq {
+            return false;
+        }
+        self.last_client_seq = seq;
+        true
     }
 
     /// Mark session as active.
@@ -113,6 +126,19 @@ mod tests {
         assert_eq!(session.recent_messages.len(), 3);
         let missed = session.messages_since(0);
         assert_eq!(missed.len(), 3);
+    }
+
+    #[test]
+    fn observe_client_seq_rejects_replays_and_reorders() {
+        let mut session = Session::new();
+        assert!(session.observe_client_seq(1));
+        assert!(session.observe_client_seq(2));
+        // Replay
+        assert!(!session.observe_client_seq(2));
+        // Out-of-order
+        assert!(!session.observe_client_seq(1));
+        // Continues monotonically
+        assert!(session.observe_client_seq(5));
     }
 
     #[test]

@@ -6,11 +6,27 @@ use tokio::net::TcpStream;
 use tokio::sync::{RwLock, mpsc};
 use tokio_rustls::server::TlsStream;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tracing::{error, info, warn};
+
+/// Max WebSocket message size (64 KiB). Game messages are tiny; this prevents memory DoS.
+const MAX_WS_MESSAGE_BYTES: usize = 64 * 1024;
+/// Max WebSocket frame size (16 KiB).
+const MAX_WS_FRAME_BYTES: usize = 16 * 1024;
+/// Per-connection broadcast queue capacity (messages). Slow clients get dropped on overflow.
+const BROADCAST_CHANNEL_CAPACITY: usize = 256;
+/// Idle timeout: drop connections with no client activity for this long.
+const IDLE_TIMEOUT_SECS: u64 = 300;
+/// Max accepted username length (chars).
+pub const MAX_USERNAME_LEN: usize = 32;
+/// Max accepted password length (bytes) — caps Argon2 CPU cost.
+pub const MAX_PASSWORD_LEN: usize = 128;
+/// Min password length.
+pub const MIN_PASSWORD_LEN: usize = 8;
 
 use gc_shared::protocol::codec;
 use gc_shared::protocol::messages::{ClientMsg, Envelope, ServerMsg};
-use gc_shared::protocol::version::{MIN_CLIENT_VERSION, PROTOCOL_VERSION};
+use gc_shared::protocol::version::{MIN_CLIENT_VERSION, PROTOCOL_VERSION, check_version};
 use gc_shared::types::{PlayerId, PlayerInfo};
 use uuid::Uuid;
 
@@ -20,7 +36,7 @@ use crate::lobby::manager::LobbyManager;
 use crate::ws::session::Session;
 
 /// Registry of connected players for broadcasting messages.
-pub type PlayerRegistry = Arc<RwLock<HashMap<PlayerId, mpsc::UnboundedSender<ServerMsg>>>>;
+pub type PlayerRegistry = Arc<RwLock<HashMap<PlayerId, mpsc::Sender<ServerMsg>>>>;
 
 /// Shared state passed to each connection handler.
 pub struct ServerState {
@@ -57,19 +73,23 @@ impl HandleResult {
 
 /// Handle a single WebSocket connection over TLS.
 pub async fn handle_connection(tls_stream: TlsStream<TcpStream>, state: Arc<ServerState>) {
-    let ws_stream = match tokio_tungstenite::accept_async(tls_stream).await {
-        Ok(ws) => ws,
-        Err(e) => {
-            error!("WebSocket handshake failed: {e}");
-            return;
-        }
-    };
+    let ws_config = WebSocketConfig::default()
+        .max_message_size(Some(MAX_WS_MESSAGE_BYTES))
+        .max_frame_size(Some(MAX_WS_FRAME_BYTES));
+    let ws_stream =
+        match tokio_tungstenite::accept_async_with_config(tls_stream, Some(ws_config)).await {
+            Ok(ws) => ws,
+            Err(e) => {
+                error!("WebSocket handshake failed: {e}");
+                return;
+            }
+        };
 
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
     let mut session = Session::new();
 
-    // Channel for receiving broadcast messages from other connections
-    let (broadcast_tx, mut broadcast_rx) = mpsc::unbounded_channel::<ServerMsg>();
+    // Bounded channel: prevents memory exhaustion from slow-reading clients.
+    let (broadcast_tx, mut broadcast_rx) = mpsc::channel::<ServerMsg>(BROADCAST_CHANNEL_CAPACITY);
 
     info!(session_id = %session.session_id, "new connection");
 
@@ -83,8 +103,18 @@ pub async fn handle_connection(tls_stream: TlsStream<TcpStream>, state: Arc<Serv
         return;
     }
 
+    let mut idle_ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+    idle_ticker.tick().await; // discard immediate tick
+
     loop {
         tokio::select! {
+            // Idle-timeout check: drop connections with no recent activity.
+            _ = idle_ticker.tick() => {
+                if session.last_active.elapsed().as_secs() > IDLE_TIMEOUT_SECS {
+                    info!(session_id = %session.session_id, "closing idle connection");
+                    break;
+                }
+            }
             // Incoming WebSocket message from this client
             msg_result = ws_receiver.next() => {
                 let Some(msg_result) = msg_result else { break };
@@ -106,20 +136,25 @@ pub async fn handle_connection(tls_stream: TlsStream<TcpStream>, state: Arc<Serv
                             }
                         };
 
-                        if envelope.version < MIN_CLIENT_VERSION {
+                        if let Err(reason) = check_version(envelope.version) {
                             let _ = send_msg(
                                 &mut ws_sender,
                                 &mut session,
                                 &ServerMsg::Error {
                                     code: 426,
-                                    message: format!(
-                                        "protocol version {} too old, minimum is {}",
-                                        envelope.version, MIN_CLIENT_VERSION
-                                    ),
+                                    message: reason,
                                 },
                             )
                             .await;
                             break;
+                        }
+                        if !session.observe_client_seq(envelope.seq) {
+                            warn!(
+                                session_id = %session.session_id,
+                                seq = envelope.seq,
+                                "rejecting out-of-order/replayed client seq"
+                            );
+                            continue;
                         }
 
                         let result = handle_client_msg(
@@ -142,7 +177,7 @@ pub async fn handle_connection(tls_stream: TlsStream<TcpStream>, state: Arc<Serv
                         for (target_id, msg) in result.broadcasts {
                             let players = state.players.read().await;
                             if let Some(tx) = players.get(&target_id) {
-                                let _ = tx.send(msg);
+                                let _ = tx.try_send(msg);
                             }
                         }
                     }
@@ -189,9 +224,9 @@ pub async fn handle_connection(tls_stream: TlsStream<TcpStream>, state: Arc<Serv
 
                 for p in &room_players {
                     if let Some(tx) = players.get(&p.id) {
-                        let _ = tx.send(leave_msg.clone());
+                        let _ = tx.try_send(leave_msg.clone());
                         if let Some(winner) = remaining_id {
-                            let _ = tx.send(ServerMsg::GameOver {
+                            let _ = tx.try_send(ServerMsg::GameOver {
                                 outcome: gc_shared::types::GameOutcome::Win(winner),
                             });
                         }
@@ -208,7 +243,7 @@ async fn handle_client_msg(
     msg: &ClientMsg,
     session: &mut Session,
     state: &ServerState,
-    broadcast_tx: &mpsc::UnboundedSender<ServerMsg>,
+    broadcast_tx: &mpsc::Sender<ServerMsg>,
 ) -> HandleResult {
     match msg {
         ClientMsg::Register { username, password } => {
@@ -609,9 +644,15 @@ async fn handle_register(
     session: &mut Session,
     state: &ServerState,
 ) -> Option<ServerMsg> {
-    if username.is_empty() || password.len() < 8 {
+    if username.is_empty()
+        || username.chars().count() > MAX_USERNAME_LEN
+        || password.len() < MIN_PASSWORD_LEN
+        || password.len() > MAX_PASSWORD_LEN
+    {
         return Some(ServerMsg::AuthFail {
-            reason: "username required, password must be at least 8 characters".to_string(),
+            reason: format!(
+                "username must be 1-{MAX_USERNAME_LEN} chars, password must be {MIN_PASSWORD_LEN}-{MAX_PASSWORD_LEN} bytes"
+            ),
         });
     }
 
@@ -641,7 +682,7 @@ async fn handle_register(
     let uname = username.to_string();
     let phash = password_hash;
     let created = tokio::task::spawn_blocking(move || {
-        let conn = db_conn.lock().unwrap();
+        let conn = db_conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute(
             "INSERT INTO users (id, username, password_hash) VALUES (?1, ?2, ?3)",
             rusqlite::params![uid, uname, phash],
@@ -693,10 +734,19 @@ async fn handle_login(
     session: &mut Session,
     state: &ServerState,
 ) -> Option<ServerMsg> {
+    // Reject oversized inputs before touching Argon2 (prevents CPU DoS).
+    if username.is_empty()
+        || username.chars().count() > MAX_USERNAME_LEN
+        || password.len() > MAX_PASSWORD_LEN
+    {
+        return Some(ServerMsg::AuthFail {
+            reason: "invalid credentials".to_string(),
+        });
+    }
     let db_conn = state.db.conn();
     let uname = username.to_string();
     let user = tokio::task::spawn_blocking(move || {
-        let conn = db_conn.lock().unwrap();
+        let conn = db_conn.lock().unwrap_or_else(|e| e.into_inner());
         let mut stmt = conn
             .prepare("SELECT id, password_hash FROM users WHERE username = ?1")
             .ok()?;
@@ -819,4 +869,33 @@ where
         .map_err(|e| e.to_string())?;
     session.record_message(seq, msg.clone());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hash_and_verify_password_roundtrip() {
+        let hash = hash_password("correct-horse-battery-staple").expect("hash");
+        assert!(verify_password("correct-horse-battery-staple", &hash));
+    }
+
+    #[test]
+    fn wrong_password_fails_verification() {
+        let hash = hash_password("correct-horse-battery-staple").expect("hash");
+        assert!(!verify_password("nope", &hash));
+    }
+
+    #[test]
+    fn malformed_hash_fails_gracefully() {
+        assert!(!verify_password("any", "not-an-argon2-hash"));
+    }
+
+    #[test]
+    fn each_hash_uses_unique_salt() {
+        let h1 = hash_password("same-password").unwrap();
+        let h2 = hash_password("same-password").unwrap();
+        assert_ne!(h1, h2, "Argon2 hashes must use per-call salts");
+    }
 }

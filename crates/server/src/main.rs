@@ -9,7 +9,11 @@ mod ws;
 use std::sync::Arc;
 
 use tokio::net::TcpListener;
-use tracing::{error, info};
+use tokio::sync::Semaphore;
+use tracing::{error, info, warn};
+
+/// Global cap on concurrent connections — prevents FD exhaustion / TLS handshake DoS.
+const MAX_CONCURRENT_CONNECTIONS: usize = 1024;
 
 use config::ServerConfig;
 use database::Database;
@@ -92,11 +96,23 @@ async fn main() {
 
     info!(addr = %config.bind_addr, "server listening");
 
+    let conn_semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
+
     loop {
         let (tcp_stream, peer_addr) = match listener.accept().await {
             Ok(s) => s,
             Err(e) => {
                 error!("accept failed: {e}");
+                continue;
+            }
+        };
+
+        // Reject connection if global cap reached (rather than queueing indefinitely).
+        let permit = match Arc::clone(&conn_semaphore).try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                warn!(%peer_addr, "connection cap reached; dropping");
+                drop(tcp_stream);
                 continue;
             }
         };
@@ -115,6 +131,7 @@ async fn main() {
                     error!(%peer_addr, "TLS handshake failed: {e}");
                 }
             }
+            drop(permit);
         });
     }
 }

@@ -293,6 +293,9 @@ mod protocol_regression {
                 session_id: SessionId::new(),
                 last_seq: 42,
             },
+            ClientMsg::RequestRematch,
+            ClientMsg::RematchResponse { accept: true },
+            ClientMsg::RematchResponse { accept: false },
         ];
 
         for (i, msg) in variants.into_iter().enumerate() {
@@ -373,6 +376,9 @@ mod protocol_regression {
                 version: "0.1.0".into(),
                 min_client_protocol: 1,
             },
+            ServerMsg::RematchRequested,
+            ServerMsg::RematchAccepted,
+            ServerMsg::RematchDeclined,
         ];
 
         for (i, msg) in variants.into_iter().enumerate() {
