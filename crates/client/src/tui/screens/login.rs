@@ -57,6 +57,13 @@ pub fn render(frame: &mut Frame, app: &App) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw(": Checkers | "),
+            Span::styled(
+                "H",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(": Chess | "),
             Span::styled("Esc", Style::default().fg(Color::Yellow)),
             Span::raw(": Cancel"),
         ]))
