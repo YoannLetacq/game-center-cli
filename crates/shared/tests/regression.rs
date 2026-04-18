@@ -12,6 +12,9 @@
 // ============================================================
 mod codec_regression {
     use gc_shared::game::checkers::{Checkers, CheckersMove, CheckersState, Position};
+    use gc_shared::game::chess::{
+        Chess, ChessMove, ChessState, PieceKind, Position as ChessPosition,
+    };
     use gc_shared::game::connect4::{COLS, Connect4, Connect4Move, Connect4State, ROWS};
     use gc_shared::game::tictactoe::{TicTacToe, TicTacToeMove, TicTacToeState};
     use gc_shared::game::traits::GameEngine;
@@ -114,6 +117,46 @@ mod codec_regression {
     }
 
     #[test]
+    fn chess_state_roundtrip() {
+        let players = two_players();
+        let mut state = Chess::initial_state(&players, &GameSettings::default());
+        Chess::apply_move(
+            &mut state,
+            players[0],
+            &ChessMove {
+                from: ChessPosition::new(1, 4),
+                to: ChessPosition::new(3, 4),
+                promotion: None,
+            },
+        );
+        let bytes = encode(&state).expect("encode ChessState");
+        let decoded: ChessState = decode(&bytes).expect("decode ChessState");
+        assert_eq!(decoded.move_count, state.move_count);
+        assert_eq!(decoded.current_turn, state.current_turn);
+        assert_eq!(decoded.halfmove_clock, state.halfmove_clock);
+        assert_eq!(decoded.en_passant_target, state.en_passant_target);
+        for row in 0..8 {
+            for col in 0..8 {
+                assert_eq!(decoded.board[row][col], state.board[row][col]);
+            }
+        }
+    }
+
+    #[test]
+    fn chess_move_roundtrip() {
+        let mv = ChessMove {
+            from: ChessPosition::new(6, 0),
+            to: ChessPosition::new(7, 0),
+            promotion: Some(PieceKind::Queen),
+        };
+        let bytes = encode(&mv).expect("encode");
+        let decoded: ChessMove = decode(&bytes).expect("decode");
+        assert_eq!(decoded.from, mv.from);
+        assert_eq!(decoded.to, mv.to);
+        assert_eq!(decoded.promotion, mv.promotion);
+    }
+
+    #[test]
     fn cross_decode_fails_gracefully() {
         let players = two_players();
         let c4_state = Connect4::initial_state(&players, &GameSettings::default());
@@ -131,6 +174,7 @@ mod codec_regression {
 // ============================================================
 mod engine_invariants {
     use gc_shared::game::checkers::{Checkers, CheckersMove, Position};
+    use gc_shared::game::chess::{Chess, ChessMove, Position as ChessPosition};
     use gc_shared::game::connect4::{Connect4, Connect4Move};
     use gc_shared::game::tictactoe::{TicTacToe, TicTacToeMove};
     use gc_shared::game::traits::GameEngine;
@@ -257,6 +301,43 @@ mod engine_invariants {
         );
         assert_eq!(Checkers::current_player(&state), players[1]);
     }
+
+    #[test]
+    fn chess_initial_invariants() {
+        let players = two_players();
+        let state = Chess::initial_state(&players, &GameSettings::default());
+        assert!(Chess::is_terminal(&state).is_none());
+        assert_eq!(Chess::current_player(&state), players[0]);
+    }
+
+    #[test]
+    fn chess_wrong_player_rejected() {
+        let players = two_players();
+        let state = Chess::initial_state(&players, &GameSettings::default());
+        let mv = ChessMove {
+            from: ChessPosition::new(1, 4),
+            to: ChessPosition::new(3, 4),
+            promotion: None,
+        };
+        assert!(Chess::validate_move(&state, players[1], &mv).is_err());
+    }
+
+    #[test]
+    fn chess_turn_alternates() {
+        let players = two_players();
+        let mut state = Chess::initial_state(&players, &GameSettings::default());
+        assert_eq!(Chess::current_player(&state), players[0]);
+        Chess::apply_move(
+            &mut state,
+            players[0],
+            &ChessMove {
+                from: ChessPosition::new(1, 4),
+                to: ChessPosition::new(3, 4),
+                promotion: None,
+            },
+        );
+        assert_eq!(Chess::current_player(&state), players[1]);
+    }
 }
 
 // ============================================================
@@ -264,6 +345,7 @@ mod engine_invariants {
 // ============================================================
 mod bot_regression {
     use gc_shared::game::checkers::{self, Checkers};
+    use gc_shared::game::chess::{self, Chess};
     use gc_shared::game::connect4::{self, Connect4};
     use gc_shared::game::tictactoe::{self, TicTacToe};
     use gc_shared::game::traits::GameEngine;
@@ -359,6 +441,38 @@ mod bot_regression {
                 "Checkers Easy bot returned an illegal move"
             );
             Checkers::apply_move(&mut state, player, &mv);
+        }
+    }
+
+    #[test]
+    fn chess_bot_moves_are_valid() {
+        let players = two_players();
+        let state = Chess::initial_state(&players, &GameSettings::default());
+        for difficulty in [Difficulty::Easy, Difficulty::Hard] {
+            let mv = chess::bot_move(&state, difficulty).expect("bot returns legal move");
+            assert!(
+                Chess::validate_move(&state, players[0], &mv).is_ok(),
+                "Chess bot ({difficulty:?}) returned invalid move"
+            );
+        }
+    }
+
+    #[test]
+    fn chess_easy_bot_game_no_illegal_moves() {
+        // Easy-vs-Easy loop capped at 80 plies; every move must validate.
+        let players = two_players();
+        let mut state = Chess::initial_state(&players, &GameSettings::default());
+        for _ in 0..80 {
+            if Chess::is_terminal(&state).is_some() {
+                break;
+            }
+            let player = Chess::current_player(&state);
+            let mv = chess::bot_move(&state, Difficulty::Easy).expect("legal move available");
+            assert!(
+                Chess::validate_move(&state, player, &mv).is_ok(),
+                "Chess Easy bot returned an illegal move"
+            );
+            Chess::apply_move(&mut state, player, &mv);
         }
     }
 }
