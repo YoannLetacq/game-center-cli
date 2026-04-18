@@ -96,7 +96,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // Hint line.
     let hint_text = if app.chess_input.pending_promotion.is_some() {
-        "Promote: Q=Queen R=Rook B=Bishop N=Knight | Esc: cancel".to_string()
+        "Promote: Q=Queen R=Rook B=Bishop N=Knight | Backspace: cancel".to_string()
     } else if app.game_over.is_some() {
         String::new()
     } else if app.chess_input.selected_from.is_some() {
@@ -210,9 +210,9 @@ fn render_board(frame: &mut Frame, state: &ChessState, app: &App, area: Rect) {
             } else if is_legal_target {
                 Color::Green
             } else if is_light {
-                Color::Gray
+                Color::Rgb(222, 184, 135) // burlywood — readable for both piece colors
             } else {
-                Color::DarkGray
+                Color::Rgb(139, 94, 60) // saddle brown — readable for both piece colors
             };
 
             let (glyph, fg) = piece_glyph(square);
