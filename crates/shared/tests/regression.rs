@@ -11,6 +11,7 @@
 // 1. CODEC: Every game state and move type must round-trip
 // ============================================================
 mod codec_regression {
+    use gc_shared::game::checkers::{Checkers, CheckersMove, CheckersState, Position};
     use gc_shared::game::connect4::{COLS, Connect4, Connect4Move, Connect4State, ROWS};
     use gc_shared::game::tictactoe::{TicTacToe, TicTacToeMove, TicTacToeState};
     use gc_shared::game::traits::GameEngine;
@@ -72,6 +73,47 @@ mod codec_regression {
     }
 
     #[test]
+    fn checkers_state_roundtrip() {
+        let players = two_players();
+        let mut state = Checkers::initial_state(&players, &GameSettings::default());
+        Checkers::apply_move(
+            &mut state,
+            players[0],
+            &CheckersMove {
+                path: vec![Position { row: 5, col: 0 }, Position { row: 4, col: 1 }],
+            },
+        );
+        let bytes = encode(&state).expect("encode CheckersState");
+        let decoded: CheckersState = decode(&bytes).expect("decode CheckersState");
+        assert_eq!(decoded.move_count, state.move_count);
+        assert_eq!(decoded.current_turn, state.current_turn);
+        assert_eq!(decoded.plies_since_progress, state.plies_since_progress);
+        for row in 0..8 {
+            for col in 0..8 {
+                assert_eq!(decoded.board[row][col], state.board[row][col]);
+            }
+        }
+    }
+
+    #[test]
+    fn checkers_move_roundtrip() {
+        let mv = CheckersMove {
+            path: vec![
+                Position { row: 5, col: 0 },
+                Position { row: 3, col: 2 },
+                Position { row: 1, col: 4 },
+            ],
+        };
+        let bytes = encode(&mv).expect("encode");
+        let decoded: CheckersMove = decode(&bytes).expect("decode");
+        assert_eq!(decoded.path.len(), mv.path.len());
+        for (a, b) in decoded.path.iter().zip(mv.path.iter()) {
+            assert_eq!(a.row, b.row);
+            assert_eq!(a.col, b.col);
+        }
+    }
+
+    #[test]
     fn cross_decode_fails_gracefully() {
         let players = two_players();
         let c4_state = Connect4::initial_state(&players, &GameSettings::default());
@@ -88,6 +130,7 @@ mod codec_regression {
 // 2. GAME ENGINE: Invariants that must hold for ALL engines
 // ============================================================
 mod engine_invariants {
+    use gc_shared::game::checkers::{Checkers, CheckersMove, Position};
     use gc_shared::game::connect4::{Connect4, Connect4Move};
     use gc_shared::game::tictactoe::{TicTacToe, TicTacToeMove};
     use gc_shared::game::traits::GameEngine;
@@ -181,12 +224,46 @@ mod engine_invariants {
             None => panic!("expected terminal state"),
         }
     }
+
+    #[test]
+    fn checkers_initial_invariants() {
+        let players = two_players();
+        let state = Checkers::initial_state(&players, &GameSettings::default());
+        assert!(Checkers::is_terminal(&state).is_none());
+        assert_eq!(Checkers::current_player(&state), players[0]);
+    }
+
+    #[test]
+    fn checkers_wrong_player_rejected() {
+        let players = two_players();
+        let state = Checkers::initial_state(&players, &GameSettings::default());
+        let mv = CheckersMove {
+            path: vec![Position { row: 5, col: 0 }, Position { row: 4, col: 1 }],
+        };
+        assert!(Checkers::validate_move(&state, players[1], &mv).is_err());
+    }
+
+    #[test]
+    fn checkers_turn_alternates() {
+        let players = two_players();
+        let mut state = Checkers::initial_state(&players, &GameSettings::default());
+        assert_eq!(Checkers::current_player(&state), players[0]);
+        Checkers::apply_move(
+            &mut state,
+            players[0],
+            &CheckersMove {
+                path: vec![Position { row: 5, col: 0 }, Position { row: 4, col: 1 }],
+            },
+        );
+        assert_eq!(Checkers::current_player(&state), players[1]);
+    }
 }
 
 // ============================================================
 // 3. BOT: Every game bot must return valid moves
 // ============================================================
 mod bot_regression {
+    use gc_shared::game::checkers::{self, Checkers};
     use gc_shared::game::connect4::{self, Connect4};
     use gc_shared::game::tictactoe::{self, TicTacToe};
     use gc_shared::game::traits::GameEngine;
@@ -250,6 +327,39 @@ mod bot_regression {
             Connect4::apply_move(&mut state, player, &mv);
         }
         assert!(Connect4::is_terminal(&state).is_some());
+    }
+
+    #[test]
+    fn checkers_bot_moves_are_valid() {
+        let players = two_players();
+        let state = Checkers::initial_state(&players, &GameSettings::default());
+        for difficulty in [Difficulty::Easy, Difficulty::Hard] {
+            let mv = checkers::bot_move(&state, difficulty);
+            assert!(
+                Checkers::validate_move(&state, players[0], &mv).is_ok(),
+                "Checkers bot ({difficulty:?}) returned invalid move"
+            );
+        }
+    }
+
+    #[test]
+    fn checkers_full_bot_game_no_panic() {
+        // Easy-vs-Easy loop: every bot move must be legal. Cap at 500 plies
+        // to guard against a pathological draw spin.
+        let players = two_players();
+        let mut state = Checkers::initial_state(&players, &GameSettings::default());
+        for _ in 0..500 {
+            if Checkers::is_terminal(&state).is_some() {
+                break;
+            }
+            let player = Checkers::current_player(&state);
+            let mv = checkers::bot_move(&state, Difficulty::Easy);
+            assert!(
+                Checkers::validate_move(&state, player, &mv).is_ok(),
+                "Checkers Easy bot returned an illegal move"
+            );
+            Checkers::apply_move(&mut state, player, &mv);
+        }
     }
 }
 

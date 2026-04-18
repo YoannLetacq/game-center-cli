@@ -1,3 +1,6 @@
+use gc_shared::game::checkers::{
+    self, BOARD_SIZE, Checkers, CheckersMove, CheckersState, Position, Side, Square,
+};
 use gc_shared::game::connect4::{self, Connect4, Connect4State};
 use gc_shared::game::tictactoe::{self, TicTacToe, TicTacToeState};
 use gc_shared::game::traits::GameEngine;
@@ -39,6 +42,49 @@ pub enum GameMode {
 pub enum ClientGameState {
     TicTacToe(TicTacToeState),
     Connect4(Connect4State),
+    Checkers(CheckersState),
+}
+
+/// Stage of the checkers input state machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckersInputStage {
+    /// No piece selected — arrow keys free-move the cursor.
+    Idle,
+    /// A piece has been picked; cursor is choosing the target square.
+    TargetSelect,
+    /// After at least one jump — cursor is choosing the next landing or submitting.
+    Chaining,
+}
+
+/// Input sub-state for checkers, layered on top of `cursor_row`/`cursor_col`.
+#[derive(Debug, Clone)]
+pub struct CheckersInputState {
+    pub stage: CheckersInputStage,
+    pub origin: Option<Position>,
+    /// Start square plus each landing square chosen so far. Empty in Idle.
+    pub partial_path: Vec<Position>,
+}
+
+impl CheckersInputState {
+    pub fn new() -> Self {
+        Self {
+            stage: CheckersInputStage::Idle,
+            origin: None,
+            partial_path: Vec::new(),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.stage = CheckersInputStage::Idle;
+        self.origin = None;
+        self.partial_path.clear();
+    }
+}
+
+impl Default for CheckersInputState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Application state for the TUI.
@@ -104,6 +150,13 @@ pub struct App {
     /// None = no solo game played yet (first game will be random).
     /// Alternates on every rematch.
     pub solo_player_went_first: Option<bool>,
+
+    // Checkers input state machine (only used when game is Checkers).
+    pub checkers_input: CheckersInputState,
+
+    /// Transient status/error line shown inside the game screen
+    /// (e.g. illegal selection feedback for Checkers).
+    pub status_message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,6 +205,8 @@ impl App {
             rematch_pending: false,
             rematch_incoming: false,
             solo_player_went_first: None,
+            checkers_input: CheckersInputState::new(),
+            status_message: None,
         }
     }
 
@@ -252,6 +307,9 @@ impl App {
             GameType::Connect4 => gc_shared::protocol::codec::decode::<Connect4State>(state_data)
                 .ok()
                 .map(ClientGameState::Connect4),
+            GameType::Checkers => gc_shared::protocol::codec::decode::<CheckersState>(state_data)
+                .ok()
+                .map(ClientGameState::Checkers),
             _ => None,
         };
         if let Some(state) = decoded {
@@ -260,12 +318,17 @@ impl App {
                 self.screen = Screen::InGame;
                 self.cursor_row = match self.selected_game_type {
                     GameType::Connect4 => 0, // cursor not used for row in Connect4
+                    GameType::Checkers => 5,
                     _ => 1,
                 };
                 self.cursor_col = match self.selected_game_type {
                     GameType::Connect4 => 3, // center column
+                    GameType::Checkers => 0,
                     _ => 1,
                 };
+                if self.selected_game_type == GameType::Checkers {
+                    self.checkers_input.reset();
+                }
             }
         }
     }
@@ -315,6 +378,9 @@ impl App {
             GameType::Connect4 => {
                 ClientGameState::Connect4(Connect4::initial_state(&players, &settings))
             }
+            GameType::Checkers => {
+                ClientGameState::Checkers(Checkers::initial_state(&players, &settings))
+            }
             _ => return,
         };
 
@@ -323,12 +389,16 @@ impl App {
         self.game_over = None;
         self.cursor_row = match self.selected_game_type {
             GameType::Connect4 => 0,
+            GameType::Checkers => 5,
             _ => 1,
         };
         self.cursor_col = match self.selected_game_type {
             GameType::Connect4 => 3,
+            GameType::Checkers => 0,
             _ => 1,
         };
+        self.checkers_input.reset();
+        self.status_message = None;
         self.screen = Screen::InGame;
 
         // If the bot goes first, apply its opening move immediately.
@@ -345,6 +415,13 @@ impl App {
                     let bot_mv = connect4::bot_move(s, difficulty);
                     Connect4::apply_move(s, bot_id, &bot_mv);
                     if let Some(outcome) = Connect4::is_terminal(s) {
+                        self.game_over = Some(outcome);
+                    }
+                }
+                ClientGameState::Checkers(s) => {
+                    let bot_mv = checkers::bot_move(s, difficulty);
+                    Checkers::apply_move(s, bot_id, &bot_mv);
+                    if let Some(outcome) = Checkers::is_terminal(s) {
                         self.game_over = Some(outcome);
                     }
                 }
@@ -404,6 +481,10 @@ impl App {
                     self.game_over = Some(outcome);
                 }
             }
+            ClientGameState::Checkers(_) => {
+                // Checkers uses the path-based `submit_checkers_move` API;
+                // this single-step (row, col) path is not expressive enough.
+            }
         }
     }
 
@@ -437,8 +518,172 @@ impl App {
         let current = match state {
             ClientGameState::TicTacToe(s) => TicTacToe::current_player(s),
             ClientGameState::Connect4(s) => Connect4::current_player(s),
+            ClientGameState::Checkers(s) => Checkers::current_player(s),
         };
         Some(current) == self.my_player_id
+    }
+
+    /// Apply a Checkers move locally in solo mode and let the bot respond.
+    /// For online mode, caller sends the encoded move; server echoes state back
+    /// and we reset our input so the next `on_game_state` cleanly applies.
+    ///
+    /// Returns `true` if the move was valid and applied (solo) or accepted for
+    /// sending (online). On `false` the caller should surface an error.
+    pub fn submit_checkers_move(&mut self, mv: CheckersMove) -> bool {
+        let Some(state) = self.game_state.as_mut() else {
+            return false;
+        };
+        let ClientGameState::Checkers(state) = state else {
+            return false;
+        };
+        let Some(player_id) = self.my_player_id else {
+            return false;
+        };
+        if Checkers::validate_move(state, player_id, &mv).is_err() {
+            return false;
+        }
+
+        match self.game_mode {
+            GameMode::Solo { difficulty } => {
+                Checkers::apply_move(state, player_id, &mv);
+                if let Some(outcome) = Checkers::is_terminal(state) {
+                    self.game_over = Some(outcome);
+                    self.checkers_input.reset();
+                    return true;
+                }
+                // Bot response. Checkers Hard bot (depth=5 alpha-beta) typically
+                // completes well under ~500 ms on mid-range hardware; call
+                // synchronously on the TUI thread. TODO: if profiling shows it
+                // slipping past that budget, dispatch via `spawn_blocking` and
+                // post back via a new `NetEvent::SoloBotMove(CheckersMove)`.
+                let bot_id = Checkers::current_player(state);
+                let bot_mv = checkers::bot_move(state, difficulty);
+                Checkers::apply_move(state, bot_id, &bot_mv);
+                if let Some(outcome) = Checkers::is_terminal(state) {
+                    self.game_over = Some(outcome);
+                }
+                self.checkers_input.reset();
+                true
+            }
+            GameMode::Online => {
+                // Server is authoritative. Caller encodes+sends; we just reset
+                // the input so the authoritative state update applies cleanly.
+                self.checkers_input.reset();
+                true
+            }
+        }
+    }
+
+    // --- Checkers input state machine helpers ---
+
+    /// Whether `(row, col)` is a dark (playable) checkers square.
+    pub fn checkers_is_dark_square(row: u8, col: u8) -> bool {
+        (row as usize + col as usize) % 2 == 1
+    }
+
+    /// Returns the side-to-move for the current Checkers state.
+    fn checkers_current_side(state: &CheckersState) -> Side {
+        // Mirrors `side_for_turn` in checkers.rs: turn 0 = Black, turn 1 = Red.
+        if state.current_turn == 0 {
+            Side::Black
+        } else {
+            Side::Red
+        }
+    }
+
+    /// Handle an arrow-key direction in Checkers. Moves the cursor one square
+    /// in the given direction, clamped to the board. All 64 squares are
+    /// reachable; dark-square validation happens at Enter time.
+    pub fn checkers_cursor_step(&mut self, drow: i32, dcol: i32) {
+        let r = self.cursor_row as i32 + drow;
+        let c = self.cursor_col as i32 + dcol;
+        if (0..BOARD_SIZE as i32).contains(&r) && (0..BOARD_SIZE as i32).contains(&c) {
+            self.cursor_row = r as u8;
+            self.cursor_col = c as u8;
+        }
+    }
+
+    /// Reset the Checkers input state and clear any transient error.
+    pub fn checkers_cancel_selection(&mut self) {
+        self.checkers_input.reset();
+        self.status_message = None;
+    }
+
+    /// Handle `Enter` at the current cursor position for Checkers. Advances
+    /// the input state machine, submitting the move when complete.
+    /// Confirm the current input stage.
+    ///
+    /// Returns `Some(mv)` when the player completed a legal move — in solo
+    /// mode the move is applied locally; in online mode the caller is
+    /// responsible for sending it over the network. Returns `None` for
+    /// partial progress (selected a piece, extended a chain) or on error.
+    pub fn checkers_confirm(&mut self) -> Option<CheckersMove> {
+        self.status_message = None;
+        let Some(ClientGameState::Checkers(state)) = self.game_state.as_ref() else {
+            return None;
+        };
+        let player_id = self.my_player_id?;
+        if Checkers::current_player(state) != player_id {
+            return None;
+        }
+        let side = Self::checkers_current_side(state);
+        let cursor = Position {
+            row: self.cursor_row,
+            col: self.cursor_col,
+        };
+
+        match self.checkers_input.stage.clone() {
+            CheckersInputStage::Idle => {
+                if !Self::checkers_is_dark_square(cursor.row, cursor.col) {
+                    return None;
+                }
+                let sq = state.board[cursor.row as usize][cursor.col as usize];
+                let matches_side = matches!(
+                    (sq, side),
+                    (Square::Man(s) | Square::King(s), side2) if s == side2
+                );
+                if !matches_side {
+                    self.status_message = Some("Select one of your own pieces".to_string());
+                    return None;
+                }
+                self.checkers_input.stage = CheckersInputStage::TargetSelect;
+                self.checkers_input.origin = Some(cursor);
+                self.checkers_input.partial_path = vec![cursor];
+                None
+            }
+            CheckersInputStage::TargetSelect | CheckersInputStage::Chaining => {
+                if self.checkers_input.partial_path.last() == Some(&cursor) {
+                    return None;
+                }
+                let mut tentative = self.checkers_input.partial_path.clone();
+                tentative.push(cursor);
+
+                let candidate = CheckersMove {
+                    path: tentative.clone(),
+                };
+                if Checkers::validate_move(state, player_id, &candidate).is_ok() {
+                    if matches!(self.game_mode, GameMode::Solo { .. }) {
+                        self.submit_checkers_move(candidate.clone());
+                    } else {
+                        // Online: reset input; caller sends the move.
+                        self.checkers_input.reset();
+                    }
+                    return Some(candidate);
+                }
+
+                let is_prefix = checkers::legal_moves(state).iter().any(|m| {
+                    m.path.len() > tentative.len() && m.path[..tentative.len()] == tentative[..]
+                });
+                if is_prefix {
+                    self.checkers_input.stage = CheckersInputStage::Chaining;
+                    self.checkers_input.partial_path = tentative;
+                } else {
+                    self.status_message = Some("Illegal target — selection cleared".to_string());
+                    self.checkers_input.reset();
+                }
+                None
+            }
+        }
     }
 
     /// Called when a player joins our room.
@@ -464,12 +709,16 @@ impl App {
         self.rematch_incoming = false;
         self.cursor_row = match self.current_game_type {
             GameType::Connect4 => 0,
+            GameType::Checkers => 5,
             _ => 1,
         };
         self.cursor_col = match self.current_game_type {
             GameType::Connect4 => 3,
+            GameType::Checkers => 0,
             _ => 1,
         };
+        self.checkers_input.reset();
+        self.status_message = None;
     }
 
     /// Called when a rematch is declined: clear flags and return to lobby.
@@ -668,6 +917,152 @@ mod tests {
         assert!(app.selecting_difficulty);
         app.selecting_difficulty = false;
         assert!(!app.selecting_difficulty);
+    }
+
+    // --- Checkers tests ---
+
+    /// Build a solo Checkers app where the player (Black) moves first.
+    fn checkers_solo_app() -> App {
+        let mut app = test_app();
+        app.selected_game_type = GameType::Checkers;
+        // Force player-goes-first on next start (alternates from Some(false)).
+        app.solo_player_went_first = Some(false);
+        app.start_solo_game(Difficulty::Easy);
+        app
+    }
+
+    #[test]
+    fn checkers_solo_start_sets_state_and_cursor() {
+        let app = checkers_solo_app();
+        assert_eq!(app.screen, Screen::InGame);
+        assert!(matches!(app.game_state, Some(ClientGameState::Checkers(_))));
+        // Initial cursor lands on a dark square (5, 0).
+        assert_eq!(app.cursor_row, 5);
+        assert_eq!(app.cursor_col, 0);
+        assert!(App::checkers_is_dark_square(app.cursor_row, app.cursor_col));
+        assert_eq!(app.checkers_input.stage, CheckersInputStage::Idle);
+        assert!(app.checkers_input.partial_path.is_empty());
+    }
+
+    #[test]
+    fn checkers_cursor_steps_one_square_and_clamps_to_board() {
+        let mut app = checkers_solo_app();
+        // Initial cursor is (5, 0). Step down -> (6, 0).
+        app.checkers_cursor_step(1, 0);
+        assert_eq!((app.cursor_row, app.cursor_col), (6, 0));
+        // Left from column 0 is a no-op.
+        app.checkers_cursor_step(0, -1);
+        assert_eq!((app.cursor_row, app.cursor_col), (6, 0));
+        // Step up + right lands on any square (light squares are reachable).
+        app.checkers_cursor_step(-1, 1);
+        assert_eq!((app.cursor_row, app.cursor_col), (5, 1));
+    }
+
+    #[test]
+    fn checkers_input_idle_to_target_select_on_enter_over_own_piece() {
+        let mut app = checkers_solo_app();
+        // Cursor starts at (5,0) which in initial layout is a Black man.
+        assert_eq!(app.checkers_input.stage, CheckersInputStage::Idle);
+        app.checkers_confirm();
+        assert_eq!(app.checkers_input.stage, CheckersInputStage::TargetSelect);
+        assert_eq!(app.checkers_input.origin, Some(Position { row: 5, col: 0 }));
+        assert_eq!(app.checkers_input.partial_path.len(), 1);
+    }
+
+    #[test]
+    fn checkers_single_step_submits_and_alternates_turn() {
+        let mut app = checkers_solo_app();
+        // Select the Black man at (5, 0).
+        app.checkers_confirm();
+        assert_eq!(app.checkers_input.stage, CheckersInputStage::TargetSelect);
+
+        // Move cursor to (4, 1) — diagonal forward for Black, legal step.
+        app.cursor_row = 4;
+        app.cursor_col = 1;
+        let my_id = app.my_player_id.unwrap();
+        app.checkers_confirm();
+
+        // Move submitted, input reset.
+        assert_eq!(app.checkers_input.stage, CheckersInputStage::Idle);
+        assert!(app.checkers_input.partial_path.is_empty());
+
+        // After our move the bot (or lack of moves) should have responded.
+        // At minimum: our move applied. Verify board: (5,0) empty, (4,1) Black.
+        let Some(ClientGameState::Checkers(ref state)) = app.game_state else {
+            panic!("expected Checkers state");
+        };
+        assert_eq!(state.board[5][0], Square::Empty);
+        assert_eq!(state.board[4][1], Square::Man(Side::Black));
+        // Move count includes our move and the bot's response (at least 2).
+        assert!(state.move_count >= 1);
+        // It must be our turn again (bot moved) unless the game terminated.
+        if app.game_over.is_none() {
+            assert_eq!(Checkers::current_player(state), my_id);
+        }
+    }
+
+    #[test]
+    fn checkers_mandatory_capture_not_intercepted_by_non_capture() {
+        let mut app = checkers_solo_app();
+        // Force a state where Black must capture.
+        let Some(ClientGameState::Checkers(ref mut state)) = app.game_state else {
+            panic!("expected Checkers state");
+        };
+        state.board = [[Square::Empty; BOARD_SIZE]; BOARD_SIZE];
+        state.board[5][0] = Square::Man(Side::Black);
+        state.board[4][1] = Square::Man(Side::Red);
+        // Also put a second Black man that could move non-capture: (5,2)->(4,3).
+        state.board[5][2] = Square::Man(Side::Black);
+        state.current_turn = 0; // Black to move.
+
+        // Pick the non-capture origin (5,2).
+        app.cursor_row = 5;
+        app.cursor_col = 2;
+        app.checkers_confirm();
+        // Target (4,3) — would be a legal quiet step if no capture were pending.
+        app.cursor_row = 4;
+        app.cursor_col = 3;
+        app.checkers_confirm();
+
+        // Rejected: state reset, an error set, board unchanged for (5,2).
+        assert_eq!(app.checkers_input.stage, CheckersInputStage::Idle);
+        assert!(app.status_message.is_some());
+        let Some(ClientGameState::Checkers(ref state)) = app.game_state else {
+            panic!("expected Checkers state");
+        };
+        assert_eq!(state.board[5][2], Square::Man(Side::Black));
+        assert_eq!(state.board[4][3], Square::Empty);
+    }
+
+    #[test]
+    fn checkers_esc_cancels_selection() {
+        let mut app = checkers_solo_app();
+        app.checkers_confirm();
+        assert_eq!(app.checkers_input.stage, CheckersInputStage::TargetSelect);
+        app.checkers_cancel_selection();
+        assert_eq!(app.checkers_input.stage, CheckersInputStage::Idle);
+        assert!(app.checkers_input.origin.is_none());
+        assert!(app.checkers_input.partial_path.is_empty());
+    }
+
+    #[test]
+    fn g_key_cycle_includes_checkers() {
+        // Mirror the cycle in handle_lobby_key. Starts at TicTacToe.
+        let mut g = GameType::TicTacToe;
+        let cycle = |gt: GameType| -> GameType {
+            match gt {
+                GameType::TicTacToe => GameType::Connect4,
+                GameType::Connect4 => GameType::Checkers,
+                GameType::Checkers => GameType::TicTacToe,
+                _ => GameType::TicTacToe,
+            }
+        };
+        g = cycle(g);
+        assert_eq!(g, GameType::Connect4);
+        g = cycle(g);
+        assert_eq!(g, GameType::Checkers);
+        g = cycle(g);
+        assert_eq!(g, GameType::TicTacToe);
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use gc_shared::game::checkers::{Checkers, CheckersState};
 use gc_shared::game::connect4::{Connect4, Connect4State};
 use gc_shared::game::tictactoe::{TicTacToe, TicTacToeState};
 use gc_shared::game::traits::GameEngine;
@@ -18,12 +19,16 @@ pub struct TurnBasedGame {
 pub enum GameState {
     TicTacToe(TicTacToeState),
     Connect4(Connect4State),
+    Checkers(CheckersState),
 }
 
 impl TurnBasedGame {
     /// Check if a game type is currently implemented.
     pub fn is_supported(game_type: GameType) -> bool {
-        matches!(game_type, GameType::TicTacToe | GameType::Connect4)
+        matches!(
+            game_type,
+            GameType::TicTacToe | GameType::Connect4 | GameType::Checkers
+        )
     }
 
     /// Create a new game for the given type and players.
@@ -33,6 +38,7 @@ impl TurnBasedGame {
                 GameState::TicTacToe(TicTacToe::initial_state(players, settings))
             }
             GameType::Connect4 => GameState::Connect4(Connect4::initial_state(players, settings)),
+            GameType::Checkers => GameState::Checkers(Checkers::initial_state(players, settings)),
             _ => return None,
         };
 
@@ -59,6 +65,9 @@ impl TurnBasedGame {
             GameState::Connect4(ref mut state) => {
                 apply_typed_action::<Connect4>(state, player, action_data)
             }
+            GameState::Checkers(ref mut state) => {
+                apply_typed_action::<Checkers>(state, player, action_data)
+            }
         };
 
         let state_bytes = match state_bytes {
@@ -84,6 +93,7 @@ impl TurnBasedGame {
         let outcome = match &self.state {
             GameState::TicTacToe(state) => TicTacToe::is_terminal(state),
             GameState::Connect4(state) => Connect4::is_terminal(state),
+            GameState::Checkers(state) => Checkers::is_terminal(state),
         };
 
         if let Some(outcome) = outcome {
@@ -108,6 +118,7 @@ impl TurnBasedGame {
         match &self.state {
             GameState::TicTacToe(state) => state.move_count as u64,
             GameState::Connect4(state) => state.move_count as u64,
+            GameState::Checkers(state) => state.move_count as u64,
         }
     }
 
@@ -117,6 +128,7 @@ impl TurnBasedGame {
         match &self.state {
             GameState::TicTacToe(state) => Some(TicTacToe::current_player(state)),
             GameState::Connect4(state) => Some(Connect4::current_player(state)),
+            GameState::Checkers(state) => Some(Checkers::current_player(state)),
         }
     }
 
@@ -125,6 +137,7 @@ impl TurnBasedGame {
         match &self.state {
             GameState::TicTacToe(state) => codec::encode(state).unwrap_or_default(),
             GameState::Connect4(state) => codec::encode(state).unwrap_or_default(),
+            GameState::Checkers(state) => codec::encode(state).unwrap_or_default(),
         }
     }
 }

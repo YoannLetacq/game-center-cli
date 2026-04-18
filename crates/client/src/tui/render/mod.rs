@@ -1,3 +1,4 @@
+pub mod checkers;
 pub mod connect4;
 pub mod terminal_fit;
 pub mod tictactoe;

@@ -55,6 +55,9 @@ pub fn run(mut app: App) -> io::Result<()> {
                     Some(app::ClientGameState::Connect4(_)) => {
                         render::connect4::render(frame, &app)
                     }
+                    Some(app::ClientGameState::Checkers(_)) => {
+                        render::checkers::render(frame, &app)
+                    }
                     _ => render::tictactoe::render(frame, &app),
                 },
             }
@@ -223,6 +226,11 @@ fn handle_login_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                 app.selecting_solo_game = false;
                 app.selecting_difficulty = true;
             }
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                app.selected_game_type = gc_shared::types::GameType::Checkers;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
             KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
                 app.selecting_solo_game = false;
             }
@@ -313,6 +321,11 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                 app.selecting_solo_game = false;
                 app.selecting_difficulty = true;
             }
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                app.selected_game_type = gc_shared::types::GameType::Checkers;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
             KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
                 app.selecting_solo_game = false;
             }
@@ -338,6 +351,18 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
             }
             KeyCode::Char('c') | KeyCode::Char('C') => {
                 app.selected_game_type = gc_shared::types::GameType::Connect4;
+                app.selecting_multiplayer_game = false;
+
+                let settings = gc_shared::types::GameSettings::default();
+                app.current_game_type = app.selected_game_type;
+                app.current_max_players = settings.max_players;
+                let _ = net.send(NetCommand::CreateRoom {
+                    game_type: app.selected_game_type,
+                    settings,
+                });
+            }
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                app.selected_game_type = gc_shared::types::GameType::Checkers;
                 app.selecting_multiplayer_game = false;
 
                 let settings = gc_shared::types::GameSettings::default();
@@ -384,7 +409,8 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
             // Cycle through available game types
             app.selected_game_type = match app.selected_game_type {
                 gc_shared::types::GameType::TicTacToe => gc_shared::types::GameType::Connect4,
-                gc_shared::types::GameType::Connect4 => gc_shared::types::GameType::TicTacToe,
+                gc_shared::types::GameType::Connect4 => gc_shared::types::GameType::Checkers,
+                gc_shared::types::GameType::Checkers => gc_shared::types::GameType::TicTacToe,
                 _ => gc_shared::types::GameType::TicTacToe,
             };
         }
@@ -454,9 +480,34 @@ fn handle_game_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         Some(app::ClientGameState::Connect4(_)) => {
             handle_connect4_key(app, code, net);
         }
+        Some(app::ClientGameState::Checkers(_)) => {
+            handle_checkers_key(app, code, net);
+        }
         _ => {
             handle_tictactoe_key(app, code, net);
         }
+    }
+}
+
+fn handle_checkers_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
+    match code {
+        KeyCode::Up => app.checkers_cursor_step(-1, 0),
+        KeyCode::Down => app.checkers_cursor_step(1, 0),
+        KeyCode::Left => app.checkers_cursor_step(0, -1),
+        KeyCode::Right => app.checkers_cursor_step(0, 1),
+        KeyCode::Backspace => app.checkers_cancel_selection(),
+        KeyCode::Enter => {
+            if !app.is_our_turn() {
+                return;
+            }
+            if let Some(mv) = app.checkers_confirm()
+                && matches!(app.game_mode, app::GameMode::Online)
+                && let Ok(data) = gc_shared::protocol::codec::encode(&mv)
+            {
+                let _ = net.send(NetCommand::GameAction { data });
+            }
+        }
+        _ => {}
     }
 }
 
