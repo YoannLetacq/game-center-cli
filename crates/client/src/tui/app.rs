@@ -764,12 +764,11 @@ impl App {
         let Some(player_id) = self.my_player_id else {
             return false;
         };
-        if Chess::validate_move(state, player_id, &mv).is_err() {
-            return false;
-        }
-
         match self.game_mode {
             GameMode::Solo { difficulty } => {
+                if Chess::validate_move(state, player_id, &mv).is_err() {
+                    return false;
+                }
                 Chess::apply_move(state, player_id, &mv);
                 if let Some(outcome) = Chess::is_terminal(state) {
                     self.game_over = Some(outcome);

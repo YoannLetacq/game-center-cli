@@ -537,7 +537,7 @@ fn handle_chess_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
             KeyCode::Char('n') | KeyCode::Char('N') => {
                 submit_chess_promotion(app, net, from, to, PieceKind::Knight);
             }
-            KeyCode::Backspace => {
+            KeyCode::Backspace | KeyCode::Esc => {
                 app.chess_input.pending_promotion = None;
             }
             _ => {}

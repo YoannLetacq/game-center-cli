@@ -198,15 +198,29 @@ impl GameEngine for Chess {
     }
 
     fn is_terminal(state: &Self::State) -> Option<GameOutcome> {
+        // Checkmate / stalemate — must be evaluated before 50-move and repetition (FIDE)
+        let moves = legal_moves(state);
+        if moves.is_empty() {
+            let side = side_for_turn(state.current_turn);
+            if in_check(state, side) {
+                let winner = state.players[1 - state.current_turn];
+                return Some(GameOutcome::Win(winner));
+            } else {
+                return Some(GameOutcome::Draw);
+            }
+        }
+
         // 50-move rule (100 half-moves)
         if state.halfmove_clock >= 100 {
             return Some(GameOutcome::Draw);
         }
 
-        // Threefold repetition
-        if let Some(&last) = state.position_history.last() {
-            let count = state.position_history.iter().filter(|&&h| h == last).count();
-            if count >= 3 {
+        // Threefold repetition — any position repeated >= 3 times
+        let mut counts: std::collections::HashMap<u64, u32> = std::collections::HashMap::new();
+        for &h in &state.position_history {
+            let c = counts.entry(h).or_insert(0);
+            *c += 1;
+            if *c >= 3 {
                 return Some(GameOutcome::Draw);
             }
         }
@@ -214,20 +228,6 @@ impl GameEngine for Chess {
         // Insufficient material
         if is_insufficient_material(&state.board) {
             return Some(GameOutcome::Draw);
-        }
-
-        // Check for legal moves
-        let moves = legal_moves(state);
-        if moves.is_empty() {
-            let side = side_for_turn(state.current_turn);
-            if in_check(state, side) {
-                // Checkmate — other side wins
-                let winner = state.players[1 - state.current_turn];
-                return Some(GameOutcome::Win(winner));
-            } else {
-                // Stalemate
-                return Some(GameOutcome::Draw);
-            }
         }
 
         None
@@ -515,8 +515,15 @@ fn pseudo_moves_for_piece(
                 Side::Black => 7,
             };
             if r == back_row && c == 4 && !in_check_board(&state.board, state.current_turn) {
+                let rook_at = |col: usize| -> bool {
+                    matches!(
+                        state.board[back_row as usize][col],
+                        Some(Piece { kind: PieceKind::Rook, side: s }) if s == side
+                    )
+                };
                 // Kingside: king col 4 → 6, rook col 7 → 5
                 if state.castle_rights.kingside_for(side)
+                    && rook_at(7)
                     && state.board[back_row as usize][5].is_none()
                     && state.board[back_row as usize][6].is_none()
                     && !is_square_attacked(&state.board, Position::new(back_row as u8, 5), side.opponent())
@@ -530,6 +537,7 @@ fn pseudo_moves_for_piece(
                 }
                 // Queenside: king col 4 → 2, rook col 0 → 3
                 if state.castle_rights.queenside_for(side)
+                    && rook_at(0)
                     && state.board[back_row as usize][3].is_none()
                     && state.board[back_row as usize][2].is_none()
                     && state.board[back_row as usize][1].is_none()
@@ -763,13 +771,28 @@ fn apply_move_inner(state: &mut ChessState, side: Side, mv: &ChessMove) {
         }
     }
 
-    // Update en passant target
+    // Update en passant target — only if an enemy pawn can actually capture
     state.en_passant_target = if is_pawn_move {
         let dr = mv.to.row as i32 - mv.from.row as i32;
         if dr.abs() == 2 {
-            // Double pawn push — set EP target on the skipped square
             let ep_row = (mv.from.row as i32 + dr / 2) as u8;
-            Some(Position::new(ep_row, mv.from.col))
+            let to_r = mv.to.row as usize;
+            let to_c = mv.to.col as i32;
+            let enemy = side.opponent();
+            let has_enemy_pawn = |c: i32| -> bool {
+                if !(0..8).contains(&c) {
+                    return false;
+                }
+                matches!(
+                    state.board[to_r][c as usize],
+                    Some(Piece { kind: PieceKind::Pawn, side: s }) if s == enemy
+                )
+            };
+            if has_enemy_pawn(to_c - 1) || has_enemy_pawn(to_c + 1) {
+                Some(Position::new(ep_row, mv.from.col))
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -932,6 +955,7 @@ fn bot_random(state: &ChessState) -> Option<ChessMove> {
 }
 
 fn bot_minimax(state: &ChessState) -> Option<ChessMove> {
+    use rand::prelude::IndexedRandom;
     let moves = legal_moves(state);
     if moves.is_empty() {
         return None;
@@ -939,20 +963,30 @@ fn bot_minimax(state: &ChessState) -> Option<ChessMove> {
 
     // White (turn 0) is maximizer, Black (turn 1) is minimizer
     let maximizing = state.current_turn == 0;
-    let mut best_score = if maximizing { i32::MIN } else { i32::MAX };
-    let mut best = moves[0];
-
+    let mut scored: Vec<(ChessMove, i32)> = Vec::with_capacity(moves.len());
     for mv in &moves {
         let next = clone_and_apply_pseudo(state, mv);
         let score = chess_alpha_beta(&next, 3, i32::MIN, i32::MAX, !maximizing);
-        let better = if maximizing { score > best_score } else { score < best_score };
-        if better {
-            best_score = score;
-            best = *mv;
-        }
+        scored.push((*mv, score));
     }
 
-    Some(best)
+    let best_score = if maximizing {
+        scored.iter().map(|(_, s)| *s).max().unwrap()
+    } else {
+        scored.iter().map(|(_, s)| *s).min().unwrap()
+    };
+
+    let best_moves: Vec<ChessMove> = scored
+        .into_iter()
+        .filter(|(_, s)| *s == best_score)
+        .map(|(m, _)| m)
+        .collect();
+
+    if best_moves.len() == 1 {
+        return Some(best_moves[0]);
+    }
+    let mut rng = rand::rng();
+    best_moves.choose(&mut rng).copied()
 }
 
 fn chess_alpha_beta(

@@ -96,7 +96,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // Hint line.
     let hint_text = if app.chess_input.pending_promotion.is_some() {
-        "Promote: Q=Queen R=Rook B=Bishop N=Knight | Backspace: cancel".to_string()
+        "Promote: Q=Queen R=Rook B=Bishop N=Knight | Esc/Backspace: cancel".to_string()
     } else if app.game_over.is_some() {
         String::new()
     } else if app.chess_input.selected_from.is_some() {
