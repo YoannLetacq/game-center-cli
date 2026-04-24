@@ -55,8 +55,9 @@ async fn main() {
 
     let jwt = auth::jwt::JwtManager::new(jwt_secret.as_bytes(), config.auth.token_expiry_secs);
 
-    let lobby = lobby::manager::LobbyManager::new();
+    let lobby = Arc::new(lobby::manager::LobbyManager::new());
     let players = ws::handler::PlayerRegistry::default();
+    lobby.attach(Arc::clone(&players));
     let state = Arc::new(ServerState {
         db,
         jwt,

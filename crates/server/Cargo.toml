@@ -9,6 +9,7 @@ argon2 = { version = "0.5.3", features = ["std"] }
 futures-util = "0.3.32"
 gc-shared = { version = "0.1.0", path = "../shared" }
 jsonwebtoken = { version = "10.3.0", features = ["aws_lc_rs"] }
+rand = "0.10.1"
 rusqlite = { version = "0.39.0", features = ["bundled"] }
 rustls = { version = "0.23.37", features = ["aws_lc_rs"] }
 rustls-pemfile = "2.2.0"
