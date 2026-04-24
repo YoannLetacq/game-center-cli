@@ -58,6 +58,7 @@ pub fn run(mut app: App) -> io::Result<()> {
                     Some(app::ClientGameState::Checkers(_)) => {
                         render::checkers::render(frame, &app)
                     }
+                    Some(app::ClientGameState::Snake(_)) => render::snake::render(frame, &app),
                     _ => render::tictactoe::render(frame, &app),
                 },
             }
@@ -82,6 +83,10 @@ pub fn run(mut app: App) -> io::Result<()> {
                         }
                     } else {
                         lobby_refresh_counter = 0;
+                    }
+                    // Drive realtime solo games from the existing 50 ms tick.
+                    if app.screen == Screen::InGame {
+                        app.solo_snake_tick();
                     }
                 }
             }
@@ -126,6 +131,13 @@ fn handle_net_event(app: &mut App, event: NetEvent, net: &NetworkClient) {
         }
         NetEvent::GameStateUpdate { state_data } => {
             app.on_game_state(&state_data);
+        }
+        NetEvent::GameDelta {
+            tick: _,
+            delta_data,
+        } => {
+            // Only Snake produces deltas today; decoder routes by active state.
+            app.on_snake_delta(&delta_data);
         }
         NetEvent::GameOver { outcome } => {
             app.on_game_over(outcome);
@@ -231,6 +243,11 @@ fn handle_login_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                 app.selecting_solo_game = false;
                 app.selecting_difficulty = true;
             }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                app.selected_game_type = gc_shared::types::GameType::Snake;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
             KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
                 app.selecting_solo_game = false;
             }
@@ -326,6 +343,11 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                 app.selecting_solo_game = false;
                 app.selecting_difficulty = true;
             }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                app.selected_game_type = gc_shared::types::GameType::Snake;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
             KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
                 app.selecting_solo_game = false;
             }
@@ -410,7 +432,8 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
             app.selected_game_type = match app.selected_game_type {
                 gc_shared::types::GameType::TicTacToe => gc_shared::types::GameType::Connect4,
                 gc_shared::types::GameType::Connect4 => gc_shared::types::GameType::Checkers,
-                gc_shared::types::GameType::Checkers => gc_shared::types::GameType::TicTacToe,
+                gc_shared::types::GameType::Checkers => gc_shared::types::GameType::Snake,
+                gc_shared::types::GameType::Snake => gc_shared::types::GameType::TicTacToe,
                 _ => gc_shared::types::GameType::TicTacToe,
             };
         }
@@ -483,6 +506,9 @@ fn handle_game_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         Some(app::ClientGameState::Checkers(_)) => {
             handle_checkers_key(app, code, net);
         }
+        Some(app::ClientGameState::Snake(_)) => {
+            handle_snake_key(app, code, net);
+        }
         _ => {
             handle_tictactoe_key(app, code, net);
         }
@@ -553,6 +579,48 @@ fn handle_tictactoe_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         }
         _ => {}
     }
+}
+
+fn handle_snake_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
+    use gc_shared::game::snake::{Direction as SnakeDir, SnakeInput};
+
+    let dir = match code {
+        KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('W') => Some(SnakeDir::Up),
+        KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('S') => Some(SnakeDir::Down),
+        KeyCode::Left | KeyCode::Char('a') | KeyCode::Char('A') => Some(SnakeDir::Left),
+        KeyCode::Right | KeyCode::Char('d') | KeyCode::Char('D') => Some(SnakeDir::Right),
+        _ => None,
+    };
+    let Some(new_dir) = dir else {
+        return;
+    };
+
+    // Reject 180° reversals client-side — server also re-checks.
+    if let Some(app::ClientGameState::Snake(ref state)) = app.game_state
+        && let Some(me) = app.my_player_id
+        && let Some(my_snake) = state.snakes.iter().find(|s| s.player_id == me)
+        && is_opposite(my_snake.direction, new_dir)
+    {
+        return;
+    }
+
+    let changed = app.snake_queue_direction(new_dir);
+
+    if matches!(app.game_mode, GameMode::Online) && changed {
+        let input = SnakeInput { direction: new_dir };
+        if let Ok(data) = gc_shared::protocol::codec::encode(&input) {
+            let _ = net.send(NetCommand::GameAction { data });
+            app.snake_last_sent_direction = Some(new_dir);
+        }
+    }
+}
+
+fn is_opposite(a: gc_shared::game::snake::Direction, b: gc_shared::game::snake::Direction) -> bool {
+    use gc_shared::game::snake::Direction as D;
+    matches!(
+        (a, b),
+        (D::Up, D::Down) | (D::Down, D::Up) | (D::Left, D::Right) | (D::Right, D::Left)
+    )
 }
 
 fn handle_connect4_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
