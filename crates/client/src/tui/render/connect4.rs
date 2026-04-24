@@ -186,35 +186,40 @@ fn render_board(frame: &mut Frame, state: &Connect4State, cursor_col: u8, app: &
             let is_game_over = app.game_over.is_some();
             let cell_area = cols[board_col];
 
-            // 3-line circle rendering per cell
+            // True-circle disc built from half-block glyphs: the spaces around
+            // ▄/▀ stay blue (bg), giving visually rounded top/bottom arcs.
             let lines: Vec<Line> = match cell {
                 Cell::Red => {
                     let s = Style::default().fg(Color::Red).bg(Color::Blue);
                     vec![
-                        Line::from(Span::styled(" ╭───╮ ", s)),
-                        Line::from(Span::styled(" │███│ ", s)),
-                        Line::from(Span::styled(" ╰───╯ ", s)),
+                        Line::from(Span::styled(" ▄███▄ ", s)),
+                        Line::from(Span::styled("███████", s)),
+                        Line::from(Span::styled(" ▀███▀ ", s)),
                     ]
                 }
                 Cell::Yellow => {
                     let s = Style::default().fg(Color::Rgb(255, 140, 0)).bg(Color::Blue);
                     vec![
-                        Line::from(Span::styled(" ╭───╮ ", s)),
-                        Line::from(Span::styled(" │███│ ", s)),
-                        Line::from(Span::styled(" ╰───╯ ", s)),
+                        Line::from(Span::styled(" ▄███▄ ", s)),
+                        Line::from(Span::styled("███████", s)),
+                        Line::from(Span::styled(" ▀███▀ ", s)),
                     ]
                 }
                 Cell::Empty => {
-                    let fg = if is_cursor_col && !is_game_over {
+                    // Empty cells render as a dark disc — reads as a hole in
+                    // the blue board. Cursor column highlights its top arc.
+                    let hole = Color::Black;
+                    let top_fg = if is_cursor_col && !is_game_over {
                         Color::Yellow
                     } else {
-                        Color::White
+                        hole
                     };
-                    let s = Style::default().fg(fg).bg(Color::Blue);
+                    let base = Style::default().fg(hole).bg(Color::Blue);
+                    let top = Style::default().fg(top_fg).bg(Color::Blue);
                     vec![
-                        Line::from(Span::styled(" ╭───╮ ", s)),
-                        Line::from(Span::styled(" │   │ ", s)),
-                        Line::from(Span::styled(" ╰───╯ ", s)),
+                        Line::from(Span::styled(" ▄███▄ ", top)),
+                        Line::from(Span::styled("███████", base)),
+                        Line::from(Span::styled(" ▀███▀ ", base)),
                     ]
                 }
             };
