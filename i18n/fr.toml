@@ -47,6 +47,14 @@ you_lose = "Vous avez perdu !"
 draw = "Égalité !"
 rematch = "Revanche"
 leave = "Quitter la partie"
+snake = "Serpent"
+
+[snake]
+score = "Score : {p0} vs {p1}"
+you_crashed = "Vous êtes mort !"
+game_over = "Partie terminée"
+controls = "Flèches / WASD : bouger  |  Esc : quitter  |  I : aide"
+your_turn = "À vous de jouer"
 
 [game_names]
 tictactoe = "Morpion"
