@@ -101,6 +101,10 @@ pub struct GameSettings {
     pub difficulty: Option<Difficulty>,
     pub max_players: u8,
     pub turn_timeout_secs: Option<u64>,
+    /// Optional RNG seed for deterministic real-time games (Snake, Pacman, ...).
+    /// `#[serde(default)]` keeps the wire format backward-compatible.
+    #[serde(default)]
+    pub seed: Option<u64>,
 }
 
 impl Default for GameSettings {
@@ -109,6 +113,7 @@ impl Default for GameSettings {
             difficulty: None,
             max_players: 2,
             turn_timeout_secs: Some(60),
+            seed: None,
         }
     }
 }
