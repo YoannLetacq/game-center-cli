@@ -173,6 +173,13 @@ fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, net: &Netwo
             return;
         }
         match app.screen {
+            Screen::InGame
+                if matches!(&app.game_state, Some(app::ClientGameState::Checkers(_)))
+                    && app.checkers_input.stage != app::CheckersInputStage::Idle =>
+            {
+                app.checkers_cancel_selection();
+                return;
+            }
             Screen::InGame if app.game_mode != GameMode::Online => {
                 app.leave_solo_game();
                 return;
@@ -672,7 +679,9 @@ fn handle_checkers_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         KeyCode::Down => app.checkers_cursor_step(1, 0),
         KeyCode::Left => app.checkers_cursor_step(0, -1),
         KeyCode::Right => app.checkers_cursor_step(0, 1),
-        KeyCode::Backspace => app.checkers_cancel_selection(),
+        KeyCode::Backspace | KeyCode::Char('c') | KeyCode::Char('C') => {
+            app.checkers_cancel_selection()
+        }
         KeyCode::Enter => {
             if !app.is_our_turn() {
                 return;

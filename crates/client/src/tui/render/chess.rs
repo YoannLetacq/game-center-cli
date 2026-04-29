@@ -69,9 +69,13 @@ pub fn render(frame: &mut Frame, app: &App) {
     };
 
     let header_color = if app.game_over.is_some() {
-        Color::Yellow
+        // Checkmate is more urgent than check — make it equally bright.
+        match app.game_over {
+            Some(GameOutcome::Win(_)) => Color::Rgb(255, 85, 85),
+            _ => Color::Rgb(240, 200, 80),
+        }
     } else if in_check {
-        Color::Red
+        Color::Rgb(255, 85, 85)
     } else if app.is_our_turn() {
         Color::Green
     } else {
@@ -177,6 +181,20 @@ fn render_board(frame: &mut Frame, state: &ChessState, app: &App, area: Rect) {
         Vec::new()
     };
 
+    // Highlight king square in red when its side is in check.
+    let side_in_check_king: Option<Position> = {
+        let mut found = None;
+        for side in [Side::White, Side::Black] {
+            if chess::in_check(state, side) {
+                if let Some(kpos) = chess::king_position(state, side) {
+                    found = Some(kpos);
+                    break;
+                }
+            }
+        }
+        found
+    };
+
     // Render top-down so rank 8 (row 7) is on top, rank 1 (row 0) on the bottom.
     for visual_row in 0..BOARD_SIZE {
         let board_row = BOARD_SIZE - 1 - visual_row;
@@ -203,16 +221,25 @@ fn render_board(frame: &mut Frame, state: &ChessState, app: &App, area: Rect) {
                 .iter()
                 .any(|p| p.row as usize == board_row && p.col as usize == board_col);
 
+            let is_check_king = side_in_check_king
+                .map(|p| p.row as usize == board_row && p.col as usize == board_col)
+                .unwrap_or(false);
+
+            // Cursor + legal target: blend so both are visible.
             let bg = if is_selected {
-                Color::Yellow
+                Color::Rgb(170, 162, 58) // muted gold — keeps both white/black pieces readable
+            } else if is_cursor && is_legal_target {
+                Color::Rgb(102, 190, 150) // cyan/green blend — distinct from either alone
             } else if is_cursor {
-                Color::Cyan
+                Color::Rgb(92, 179, 204) // muted cyan
             } else if is_legal_target {
-                Color::Green
+                Color::Rgb(130, 151, 105) // muted green
+            } else if is_check_king {
+                Color::Rgb(220, 80, 80) // red highlight on the checked king's square
             } else if is_light {
-                Color::Rgb(222, 184, 135) // burlywood — readable for both piece colors
+                Color::Rgb(240, 217, 181) // chess.com light
             } else {
-                Color::Rgb(139, 94, 60) // saddle brown — readable for both piece colors
+                Color::Rgb(181, 136, 99) // chess.com dark
             };
 
             let (glyph, fg) = piece_glyph(square);

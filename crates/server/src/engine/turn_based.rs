@@ -60,6 +60,15 @@ impl TurnBasedGame {
         player: PlayerId,
         action_data: &[u8],
     ) -> (ServerMsg, Vec<(PlayerId, ServerMsg)>) {
+        if self.finished {
+            return (
+                ServerMsg::Error {
+                    code: 409,
+                    message: "game already finished".to_string(),
+                },
+                Vec::new(),
+            );
+        }
         // Decode, validate, apply — dispatched by game type
         let state_bytes = match self.state {
             GameState::TicTacToe(ref mut state) => {

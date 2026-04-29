@@ -628,10 +628,17 @@ pub fn legal_moves(state: &ChessState) -> Vec<ChessMove> {
         }
     }
 
-    // Filter: keep only moves that don't leave own king in check
+    // Filter: keep only moves that don't leave own king in check, and reject
+    // king-capture moves outright (defensive: in normal play `is_terminal`
+    // fires checkmate first, but malformed state must not let a king be eaten).
     pseudo
         .into_iter()
         .filter(|mv| {
+            if let Some(target) = state.board[mv.to.row as usize][mv.to.col as usize]
+                && target.kind == PieceKind::King
+            {
+                return false;
+            }
             let next = clone_and_apply_pseudo(state, mv);
             !in_check(&next, side)
         })
@@ -649,6 +656,14 @@ fn validate_move_inner(state: &ChessState, side: Side, mv: &ChessMove) -> Result
         Some(_) => return Err("that piece belongs to your opponent".to_string()),
         None => return Err("no piece on the source square".to_string()),
     };
+
+    // Reject king captures outright: a king is never a legal capture target
+    // (mate ends the game first). Defends against malformed state.
+    if let Some(target) = state.board[mv.to.row as usize][mv.to.col as usize]
+        && target.kind == PieceKind::King
+    {
+        return Err("a king cannot be captured".to_string());
+    }
 
     // Promotion field must be present iff pawn reaches last rank
     let promo_row: u8 = match side {
@@ -1323,6 +1338,30 @@ mod tests {
         assert!(mv_opt.is_some());
         let bot_mv = mv_opt.unwrap();
         assert!(Chess::validate_move(&s, s.players[0], &bot_mv).is_ok());
+    }
+
+    #[test]
+    fn king_capture_is_never_legal() {
+        // White rook on (0,0); black king sitting on (0,7) with no defender.
+        // Even though the rook can pseudo-capture the king on the rank,
+        // legal_moves and validate_move must reject it.
+        let mut s = empty_state();
+        s.board[0][0] = Some(Piece { kind: PieceKind::Rook, side: Side::White });
+        s.board[0][4] = Some(Piece { kind: PieceKind::King, side: Side::White });
+        s.board[0][7] = Some(Piece { kind: PieceKind::King, side: Side::Black });
+        s.current_turn = 0;
+
+        let p0 = s.players[0];
+        let capture_king = mv(0, 0, 0, 7);
+        assert!(
+            Chess::validate_move(&s, p0, &capture_king).is_err(),
+            "king-capture must be rejected by validate_move"
+        );
+        let legals = legal_moves(&s);
+        assert!(
+            !legals.iter().any(|m| m.to == Position::new(0, 7)),
+            "legal_moves must never include a king capture"
+        );
     }
 
     #[test]

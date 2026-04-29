@@ -404,10 +404,10 @@ impl App {
         });
         let bot_id = PlayerId::new();
 
-        // First game: pick starting player randomly.
+        // First game in a session: player opens (no surprise bot move on a fresh board).
         // Each rematch: alternate who goes first.
         let player_goes_first = match self.solo_player_went_first {
-            None => uuid::Uuid::new_v4().as_bytes()[0] & 1 == 0,
+            None => true,
             Some(went_first) => !went_first,
         };
         self.solo_player_went_first = Some(player_goes_first);
@@ -566,6 +566,10 @@ impl App {
         self.game_mode = GameMode::Online;
         self.game_state = None;
         self.game_over = None;
+        self.solo_player_went_first = None;
+        self.checkers_input.reset();
+        self.chess_input.reset();
+        self.status_message = None;
         self.screen = if self.authenticated {
             Screen::Lobby
         } else {
