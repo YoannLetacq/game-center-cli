@@ -1,3 +1,9 @@
+// The input handlers below use the `match { K => if cond { … } }` shape
+// throughout. Clippy 1.95+ wants those rewritten as match guards
+// (`K if cond => …`), but expressing every cursor-bound check that way
+// makes the dispatch tables noisier without a real readability win.
+#![allow(clippy::collapsible_match)]
+
 pub mod app;
 pub mod event;
 pub mod render;
