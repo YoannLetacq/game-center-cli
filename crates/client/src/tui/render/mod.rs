@@ -1,6 +1,7 @@
 pub mod checkers;
 pub mod chess;
 pub mod connect4;
+pub mod snake;
 pub mod terminal_fit;
 pub mod tictactoe;
 

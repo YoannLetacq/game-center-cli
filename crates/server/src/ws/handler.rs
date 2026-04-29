@@ -1,9 +1,8 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::mpsc;
 use tokio_rustls::server::TlsStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
@@ -35,14 +34,13 @@ use crate::database::Database;
 use crate::lobby::manager::LobbyManager;
 use crate::ws::session::Session;
 
-/// Registry of connected players for broadcasting messages.
-pub type PlayerRegistry = Arc<RwLock<HashMap<PlayerId, mpsc::Sender<ServerMsg>>>>;
+pub use crate::lobby::manager::PlayerRegistry;
 
 /// Shared state passed to each connection handler.
 pub struct ServerState {
     pub db: Database,
     pub jwt: JwtManager,
-    pub lobby: LobbyManager,
+    pub lobby: Arc<LobbyManager>,
     pub players: PlayerRegistry,
 }
 
@@ -484,6 +482,18 @@ async fn handle_client_msg(
                     });
                 }
             };
+
+            // Realtime games: route to tick-driven input buffer (no direct response).
+            if state.lobby.is_realtime_room(room_id).await {
+                state
+                    .lobby
+                    .push_realtime_input(room_id, player_id, data.clone())
+                    .await;
+                return HandleResult {
+                    response: None,
+                    broadcasts: Vec::new(),
+                };
+            }
 
             let (response, broadcasts, is_finished) = {
                 let mut games = state.lobby.games.write().await;

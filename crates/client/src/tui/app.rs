@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::time::Instant;
+
 use gc_shared::game::checkers::{
     self, BOARD_SIZE, Checkers, CheckersMove, CheckersState, Position, Side, Square,
 };
@@ -5,13 +8,26 @@ use gc_shared::game::chess::{
     self, Chess, ChessMove, ChessState, Position as ChessPosition,
 };
 use gc_shared::game::connect4::{self, Connect4, Connect4State};
+use gc_shared::game::snake::{self, Direction, SnakeDelta, SnakeEngine, SnakeInput, SnakeState};
 use gc_shared::game::tictactoe::{self, TicTacToe, TicTacToeState};
-use gc_shared::game::traits::GameEngine;
+use gc_shared::game::traits::{GameEngine, RealtimeGameEngine};
 use gc_shared::i18n::{Language, Translator};
 use gc_shared::protocol::messages::RoomSummary;
 use gc_shared::types::{
     Difficulty, GameOutcome, GameSettings, GameType, PlayerId, PlayerInfo, RoomId,
 };
+
+/// Solo Snake tick period. Matches server-side cadence for consistent feel.
+pub const SNAKE_TICK_MS: u64 = 100;
+
+/// Derive a non-deterministic u64 seed from a fresh UUID.
+/// The client crate doesn't pull `rand`; UUID v4 already uses OS entropy.
+fn rand_seed() -> u64 {
+    let bytes = *uuid::Uuid::new_v4().as_bytes();
+    u64::from_le_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ])
+}
 
 use crate::database::ClientDatabase;
 
@@ -47,6 +63,7 @@ pub enum ClientGameState {
     Connect4(Connect4State),
     Checkers(CheckersState),
     Chess(ChessState),
+    Snake(SnakeState),
 }
 
 /// Input sub-state for chess: cursor position, current selection, and any
@@ -198,6 +215,20 @@ pub struct App {
     /// Transient status/error line shown inside the game screen
     /// (e.g. illegal selection feedback for Checkers).
     pub status_message: Option<String>,
+
+    // --- Snake state ---
+    /// Pending direction queued by the player (sent online; passed to solo tick).
+    pub snake_pending_direction: Option<Direction>,
+    /// Last direction we actually sent over the wire (online debounce).
+    pub snake_last_sent_direction: Option<Direction>,
+    /// Bot player id for solo snake — cached so tick loop can compute bot input.
+    pub snake_bot_player_id: Option<PlayerId>,
+    /// Difficulty captured at solo-snake start so the tick thread can replay it.
+    pub snake_bot_difficulty: Option<Difficulty>,
+    /// Last time a solo snake tick was applied (inline scheduler).
+    pub solo_snake_last_tick: Option<Instant>,
+    /// Last delta tick we applied in online mode (for out-of-order detection).
+    pub snake_last_applied_tick: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -249,6 +280,12 @@ impl App {
             checkers_input: CheckersInputState::new(),
             chess_input: ChessInputState::new(),
             status_message: None,
+            snake_pending_direction: None,
+            snake_last_sent_direction: None,
+            snake_bot_player_id: None,
+            snake_bot_difficulty: None,
+            solo_snake_last_tick: None,
+            snake_last_applied_tick: None,
         }
     }
 
@@ -355,9 +392,16 @@ impl App {
             GameType::Chess => gc_shared::protocol::codec::decode::<ChessState>(state_data)
                 .ok()
                 .map(ClientGameState::Chess),
+            GameType::Snake => gc_shared::protocol::codec::decode::<SnakeState>(state_data)
+                .ok()
+                .map(ClientGameState::Snake),
             _ => None,
         };
         if let Some(state) = decoded {
+            // Snake: baseline snapshot — reset delta sequence tracker.
+            if let ClientGameState::Snake(ref s) = state {
+                self.snake_last_applied_tick = Some(s.tick);
+            }
             self.game_state = Some(state);
             if self.screen == Screen::Room {
                 self.screen = Screen::InGame;
@@ -419,6 +463,14 @@ impl App {
         };
         let settings = GameSettings::default();
 
+        // Reset snake per-game state up front; overwritten below for Snake mode.
+        self.snake_pending_direction = None;
+        self.snake_last_sent_direction = None;
+        self.snake_bot_player_id = None;
+        self.snake_bot_difficulty = None;
+        self.solo_snake_last_tick = None;
+        self.snake_last_applied_tick = None;
+
         let state = match self.selected_game_type {
             GameType::TicTacToe => {
                 ClientGameState::TicTacToe(TicTacToe::initial_state(&players, &settings))
@@ -431,6 +483,19 @@ impl App {
             }
             GameType::Chess => {
                 ClientGameState::Chess(Chess::initial_state(&players, &settings))
+            }
+            GameType::Snake => {
+                // Deterministic seed per game; not recorded for rematch.
+                let snake_settings = GameSettings {
+                    seed: Some(rand_seed()),
+                    ..settings.clone()
+                };
+                self.snake_bot_player_id = Some(bot_id);
+                self.snake_bot_difficulty = Some(difficulty);
+                self.solo_snake_last_tick = Some(Instant::now());
+                let s = SnakeEngine::initial_state(&players, &snake_settings);
+                self.snake_last_applied_tick = Some(s.tick);
+                ClientGameState::Snake(s)
             }
             _ => return,
         };
@@ -485,6 +550,8 @@ impl App {
                         }
                     }
                 }
+                // Snake is realtime — no discrete opening move. Tick loop drives it.
+                ClientGameState::Snake(_) => {}
             }
         }
     }
@@ -549,6 +616,9 @@ impl App {
                 // Chess uses `submit_chess_move(ChessMove)`; the (row, col)
                 // path is not expressive enough for from/to/promotion.
             }
+            ClientGameState::Snake(_) => {
+                // Snake is realtime — driven by tick loop, not per-move calls.
+            }
         }
     }
 
@@ -588,8 +658,122 @@ impl App {
             ClientGameState::Connect4(s) => Connect4::current_player(s),
             ClientGameState::Checkers(s) => Checkers::current_player(s),
             ClientGameState::Chess(s) => Chess::current_player(s),
+            // Snake is realtime — every tick we may input a direction.
+            ClientGameState::Snake(_) => {
+                return self.game_over.is_none();
+            }
         };
         Some(current) == self.my_player_id
+    }
+
+    /// Queue a direction change. In solo mode the tick loop picks it up; in
+    /// online mode the caller should also emit a `GameAction` when the
+    /// direction actually changes (debounce).
+    #[allow(dead_code)] // Consumed by T5 snake key handler.
+    pub fn snake_queue_direction(&mut self, dir: Direction) -> bool {
+        if !matches!(self.game_state, Some(ClientGameState::Snake(_))) {
+            return false;
+        }
+        let changed = self.snake_pending_direction != Some(dir);
+        self.snake_pending_direction = Some(dir);
+        changed
+    }
+
+    /// Drive a single solo snake tick if 100 ms has elapsed since the last one.
+    /// Inline scheduling reuses the existing Tick (50 ms) path in `tui::mod.rs`;
+    /// avoids a dedicated thread + channel and matches turn-based solo flow.
+    pub fn solo_snake_tick(&mut self) {
+        if !matches!(self.game_mode, GameMode::Solo { .. }) {
+            return;
+        }
+        if self.game_over.is_some() {
+            return;
+        }
+        let Some(ClientGameState::Snake(_)) = self.game_state.as_ref() else {
+            return;
+        };
+        let now = Instant::now();
+        let due = self
+            .solo_snake_last_tick
+            .map(|t| now.duration_since(t).as_millis() as u64 >= SNAKE_TICK_MS)
+            .unwrap_or(true);
+        if !due {
+            return;
+        }
+        self.solo_snake_last_tick = Some(now);
+
+        let (Some(player_id), Some(bot_id), Some(difficulty)) = (
+            self.my_player_id,
+            self.snake_bot_player_id,
+            self.snake_bot_difficulty,
+        ) else {
+            return;
+        };
+        let Some(ClientGameState::Snake(state)) = self.game_state.as_mut() else {
+            return;
+        };
+
+        let mut inputs: HashMap<PlayerId, SnakeInput> = HashMap::new();
+        if let Some(dir) = self.snake_pending_direction {
+            inputs.insert(player_id, SnakeInput { direction: dir });
+        }
+        let bot_input = snake::bot_move(state, bot_id, difficulty);
+        inputs.insert(bot_id, bot_input);
+        let delta = SnakeEngine::tick(state, &inputs);
+        if let Some(outcome) = delta.game_over {
+            self.game_over = Some(outcome);
+        }
+    }
+
+    /// Apply an incoming online SnakeDelta to our local state. If the delta's
+    /// tick doesn't follow the last applied tick we drop it and wait for the
+    /// next authoritative `GameStateUpdate` snapshot to resync.
+    pub fn on_snake_delta(&mut self, delta_data: &[u8]) {
+        let Some(ClientGameState::Snake(state)) = self.game_state.as_mut() else {
+            return;
+        };
+        let Ok(delta) = gc_shared::protocol::codec::decode::<SnakeDelta>(delta_data) else {
+            return;
+        };
+        let expected = state.tick + 1;
+        if delta.tick != expected {
+            // Out of order — wait for the next snapshot.
+            return;
+        }
+
+        // 1) Heads / growth / tail.
+        let grew: std::collections::HashSet<PlayerId> = delta.grew.iter().copied().collect();
+        for (pid, new_head) in &delta.moves {
+            if let Some(snake) = state.snakes.iter_mut().find(|s| s.player_id == *pid) {
+                snake.body.push_front(*new_head);
+                if grew.contains(pid) {
+                    snake.score += 1;
+                } else {
+                    snake.body.pop_back();
+                }
+            }
+        }
+        // 2) Deaths.
+        for pid in &delta.deaths {
+            if let Some(snake) = state.snakes.iter_mut().find(|s| s.player_id == *pid) {
+                snake.alive = false;
+            }
+        }
+        // 3) Food churn.
+        for eaten in &delta.eaten_food {
+            if let Some(idx) = state.food.iter().position(|p| p == eaten) {
+                state.food.remove(idx);
+            }
+        }
+        for spawned in &delta.new_food {
+            state.food.push(*spawned);
+        }
+        state.tick = delta.tick;
+        self.snake_last_applied_tick = Some(delta.tick);
+        if let Some(outcome) = delta.game_over {
+            state.game_over = Some(outcome.clone());
+            self.game_over = Some(outcome);
+        }
     }
 
     /// Apply a Checkers move locally in solo mode and let the bot respond.
@@ -1157,14 +1341,15 @@ mod tests {
     }
 
     #[test]
-    fn g_key_cycle_includes_checkers() {
+    fn g_key_cycle_includes_checkers_and_snake() {
         // Mirror the cycle in handle_lobby_key. Starts at TicTacToe.
         let mut g = GameType::TicTacToe;
         let cycle = |gt: GameType| -> GameType {
             match gt {
                 GameType::TicTacToe => GameType::Connect4,
                 GameType::Connect4 => GameType::Checkers,
-                GameType::Checkers => GameType::TicTacToe,
+                GameType::Checkers => GameType::Snake,
+                GameType::Snake => GameType::TicTacToe,
                 _ => GameType::TicTacToe,
             }
         };
@@ -1172,6 +1357,8 @@ mod tests {
         assert_eq!(g, GameType::Connect4);
         g = cycle(g);
         assert_eq!(g, GameType::Checkers);
+        g = cycle(g);
+        assert_eq!(g, GameType::Snake);
         g = cycle(g);
         assert_eq!(g, GameType::TicTacToe);
     }

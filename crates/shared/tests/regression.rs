@@ -16,10 +16,12 @@ mod codec_regression {
         Chess, ChessMove, ChessState, PieceKind, Position as ChessPosition,
     };
     use gc_shared::game::connect4::{COLS, Connect4, Connect4Move, Connect4State, ROWS};
+    use gc_shared::game::snake::{Direction, Snake, SnakeDelta, SnakeInput, SnakeState};
     use gc_shared::game::tictactoe::{TicTacToe, TicTacToeMove, TicTacToeState};
     use gc_shared::game::traits::GameEngine;
     use gc_shared::protocol::codec::{decode, encode};
-    use gc_shared::types::{GameSettings, PlayerId};
+    use gc_shared::types::{GameOutcome, GameSettings, PlayerId};
+    use std::collections::VecDeque;
 
     fn two_players() -> [PlayerId; 2] {
         [PlayerId::new(), PlayerId::new()]
@@ -157,6 +159,114 @@ mod codec_regression {
     }
 
     #[test]
+    fn snake_input_roundtrip() {
+        let input = SnakeInput {
+            direction: Direction::Up,
+        };
+        let bytes = encode(&input).expect("encode SnakeInput");
+        let decoded: SnakeInput = decode(&bytes).expect("decode SnakeInput");
+        assert_eq!(decoded.direction, input.direction);
+    }
+
+    #[test]
+    fn snake_state_roundtrip() {
+        let pid_a = PlayerId::new();
+        let pid_b = PlayerId::new();
+        let body_a: VecDeque<_> = vec![
+            gc_shared::game::snake::Position { x: 4, y: 9 },
+            gc_shared::game::snake::Position { x: 3, y: 9 },
+            gc_shared::game::snake::Position { x: 2, y: 9 },
+        ]
+        .into_iter()
+        .collect();
+        let body_b: VecDeque<_> = vec![
+            gc_shared::game::snake::Position { x: 27, y: 9 },
+            gc_shared::game::snake::Position { x: 28, y: 9 },
+        ]
+        .into_iter()
+        .collect();
+        let state = SnakeState {
+            arena_w: 32,
+            arena_h: 18,
+            snakes: vec![
+                Snake {
+                    player_id: pid_a,
+                    body: body_a,
+                    direction: Direction::Right,
+                    pending_direction: None,
+                    alive: true,
+                    score: 2,
+                },
+                Snake {
+                    player_id: pid_b,
+                    body: body_b,
+                    direction: Direction::Left,
+                    pending_direction: Some(Direction::Down),
+                    alive: false,
+                    score: 0,
+                },
+            ],
+            food: vec![gc_shared::game::snake::Position { x: 10, y: 5 }],
+            tick: 42,
+            rng_seed: 99,
+            rng_state: 12345,
+            game_over: Some(GameOutcome::Win(pid_a)),
+        };
+        let bytes = encode(&state).expect("encode SnakeState");
+        let decoded: SnakeState = decode(&bytes).expect("decode SnakeState");
+        assert_eq!(decoded.tick, state.tick);
+        assert_eq!(decoded.arena_w, state.arena_w);
+        assert_eq!(decoded.arena_h, state.arena_h);
+        assert_eq!(decoded.snakes.len(), 2);
+        assert_eq!(decoded.snakes[0].score, 2);
+        assert!(decoded.snakes[0].alive);
+        assert!(!decoded.snakes[1].alive);
+        assert_eq!(decoded.food.len(), 1);
+        assert!(matches!(decoded.game_over, Some(GameOutcome::Win(_))));
+    }
+
+    #[test]
+    fn snake_delta_roundtrip() {
+        let pid = PlayerId::new();
+        let delta = SnakeDelta {
+            tick: 7,
+            moves: vec![(pid, gc_shared::game::snake::Position { x: 5, y: 5 })],
+            grew: vec![pid],
+            deaths: vec![],
+            new_food: vec![gc_shared::game::snake::Position { x: 15, y: 10 }],
+            eaten_food: vec![gc_shared::game::snake::Position { x: 5, y: 5 }],
+            game_over: None,
+        };
+        let bytes = encode(&delta).expect("encode SnakeDelta");
+        let decoded: SnakeDelta = decode(&bytes).expect("decode SnakeDelta");
+        assert_eq!(decoded.tick, delta.tick);
+        assert_eq!(decoded.moves.len(), 1);
+        assert_eq!(decoded.grew.len(), 1);
+        assert!(decoded.deaths.is_empty());
+        assert_eq!(decoded.new_food.len(), 1);
+        assert_eq!(decoded.eaten_food.len(), 1);
+        assert!(decoded.game_over.is_none());
+    }
+
+    #[test]
+    fn game_settings_seed_roundtrip() {
+        // With seed.
+        let with_seed = GameSettings {
+            seed: Some(42),
+            ..GameSettings::default()
+        };
+        let bytes = encode(&with_seed).expect("encode GameSettings with seed");
+        let decoded: GameSettings = decode(&bytes).expect("decode GameSettings with seed");
+        assert_eq!(decoded.seed, Some(42));
+
+        // Without seed — backward-compat: must deserialize with seed = None.
+        let without_seed = GameSettings::default();
+        let bytes2 = encode(&without_seed).expect("encode GameSettings default");
+        let decoded2: GameSettings = decode(&bytes2).expect("decode GameSettings default");
+        assert_eq!(decoded2.seed, None);
+    }
+
+    #[test]
     fn cross_decode_fails_gracefully() {
         let players = two_players();
         let c4_state = Connect4::initial_state(&players, &GameSettings::default());
@@ -176,9 +286,22 @@ mod engine_invariants {
     use gc_shared::game::checkers::{Checkers, CheckersMove, Position};
     use gc_shared::game::chess::{Chess, ChessMove, Position as ChessPosition};
     use gc_shared::game::connect4::{Connect4, Connect4Move};
+    use gc_shared::game::snake::{
+        ARENA_H, ARENA_W, Direction, Snake, SnakeEngine, SnakeInput, SnakeState,
+    };
     use gc_shared::game::tictactoe::{TicTacToe, TicTacToeMove};
-    use gc_shared::game::traits::GameEngine;
+    use gc_shared::game::traits::{GameEngine, RealtimeGameEngine};
     use gc_shared::types::{GameOutcome, GameSettings, PlayerId};
+    use std::collections::{HashMap, VecDeque};
+
+    fn dir_opposite(d: Direction) -> Direction {
+        match d {
+            Direction::Up => Direction::Down,
+            Direction::Down => Direction::Up,
+            Direction::Left => Direction::Right,
+            Direction::Right => Direction::Left,
+        }
+    }
 
     fn two_players() -> [PlayerId; 2] {
         [PlayerId::new(), PlayerId::new()]
@@ -423,6 +546,222 @@ mod engine_invariants {
             "black pawn at d4 adjacent to e4 must set EP target to e3"
         );
     }
+
+    #[test]
+    fn snake_cannot_reverse_180_via_tick() {
+        let players = two_players();
+        let mut state = SnakeEngine::initial_state(
+            &players,
+            &GameSettings {
+                seed: Some(1),
+                ..GameSettings::default()
+            },
+        );
+        // Snake 0 starts facing Right; attempt reversal to Left.
+        let original_dir = state.snakes[0].direction;
+        let mut inputs = HashMap::new();
+        inputs.insert(
+            players[0],
+            SnakeInput {
+                direction: dir_opposite(original_dir),
+            },
+        );
+        SnakeEngine::tick(&mut state, &inputs);
+        assert_eq!(state.snakes[0].direction, original_dir);
+    }
+
+    #[test]
+    fn snake_wall_collision_kills_via_tick() {
+        let pid = PlayerId::new();
+        // Snake at top row (y=0) facing Up — next tick hits wall.
+        let body: VecDeque<_> = vec![
+            gc_shared::game::snake::Position { x: 5, y: 0 },
+            gc_shared::game::snake::Position { x: 5, y: 1 },
+        ]
+        .into_iter()
+        .collect();
+        let mut state = SnakeState {
+            arena_w: ARENA_W,
+            arena_h: ARENA_H,
+            snakes: vec![Snake {
+                player_id: pid,
+                body,
+                direction: Direction::Up,
+                pending_direction: None,
+                alive: true,
+                score: 0,
+            }],
+            food: Vec::new(),
+            tick: 0,
+            rng_seed: 1,
+            rng_state: 1,
+            game_over: None,
+        };
+        SnakeEngine::tick(&mut state, &HashMap::new());
+        assert!(!state.snakes[0].alive);
+    }
+
+    #[test]
+    fn snake_head_on_collision_kills_both_via_tick() {
+        let pid_a = PlayerId::new();
+        let pid_b = PlayerId::new();
+        // Two snakes one cell apart, facing each other.
+        let body_a: VecDeque<_> = vec![
+            gc_shared::game::snake::Position { x: 10, y: 10 },
+            gc_shared::game::snake::Position { x: 9, y: 10 },
+        ]
+        .into_iter()
+        .collect();
+        let body_b: VecDeque<_> = vec![
+            gc_shared::game::snake::Position { x: 12, y: 10 },
+            gc_shared::game::snake::Position { x: 13, y: 10 },
+        ]
+        .into_iter()
+        .collect();
+        let mut state = SnakeState {
+            arena_w: ARENA_W,
+            arena_h: ARENA_H,
+            snakes: vec![
+                Snake {
+                    player_id: pid_a,
+                    body: body_a,
+                    direction: Direction::Right,
+                    pending_direction: None,
+                    alive: true,
+                    score: 0,
+                },
+                Snake {
+                    player_id: pid_b,
+                    body: body_b,
+                    direction: Direction::Left,
+                    pending_direction: None,
+                    alive: true,
+                    score: 0,
+                },
+            ],
+            food: Vec::new(),
+            tick: 0,
+            rng_seed: 1,
+            rng_state: 1,
+            game_over: None,
+        };
+        SnakeEngine::tick(&mut state, &HashMap::new());
+        assert!(!state.snakes[0].alive, "snake A should be dead");
+        assert!(!state.snakes[1].alive, "snake B should be dead");
+        assert!(
+            matches!(state.game_over, Some(GameOutcome::Draw)),
+            "head-on collision must produce Draw"
+        );
+    }
+
+    #[test]
+    fn snake_food_growth_via_tick() {
+        let pid = PlayerId::new();
+        let food_pos = gc_shared::game::snake::Position { x: 6, y: 5 };
+        let body: VecDeque<_> = vec![
+            gc_shared::game::snake::Position { x: 5, y: 5 },
+            gc_shared::game::snake::Position { x: 4, y: 5 },
+        ]
+        .into_iter()
+        .collect();
+        let initial_len = body.len();
+        let mut state = SnakeState {
+            arena_w: ARENA_W,
+            arena_h: ARENA_H,
+            snakes: vec![Snake {
+                player_id: pid,
+                body,
+                direction: Direction::Right,
+                pending_direction: None,
+                alive: true,
+                score: 0,
+            }],
+            food: vec![food_pos],
+            tick: 0,
+            rng_seed: 123,
+            rng_state: 123,
+            game_over: None,
+        };
+        let delta = SnakeEngine::tick(&mut state, &HashMap::new());
+        assert_eq!(
+            state.snakes[0].body.len(),
+            initial_len + 1,
+            "body should grow by 1"
+        );
+        assert!(delta.grew.contains(&pid));
+        assert_eq!(delta.eaten_food, vec![food_pos]);
+        // A new food should have been spawned.
+        assert_eq!(delta.new_food.len(), 1);
+        assert_eq!(state.food.len(), 1);
+    }
+
+    #[test]
+    fn snake_deterministic_seed() {
+        let players = vec![PlayerId::new(), PlayerId::new()];
+        let settings = GameSettings {
+            seed: Some(777),
+            ..GameSettings::default()
+        };
+        let s1 = SnakeEngine::initial_state(&players, &settings);
+        let s2 = SnakeEngine::initial_state(&players, &settings);
+        assert_eq!(s1.rng_seed, s2.rng_seed);
+        assert_eq!(s1.rng_state, s2.rng_state);
+        assert_eq!(s1.food, s2.food);
+        assert_eq!(s1.tick, s2.tick);
+
+        // Apply identical tick sequences and compare deltas.
+        let mut state1 = s1;
+        let mut state2 = s2;
+        for _ in 0..5 {
+            let d1 = SnakeEngine::tick(&mut state1, &HashMap::new());
+            let d2 = SnakeEngine::tick(&mut state2, &HashMap::new());
+            assert_eq!(d1.tick, d2.tick);
+            assert_eq!(d1.new_food, d2.new_food);
+            assert_eq!(d1.moves.len(), d2.moves.len());
+        }
+    }
+
+    #[test]
+    fn snake_terminal_has_valid_outcome() {
+        let players = vec![PlayerId::new(), PlayerId::new()];
+        let settings = GameSettings {
+            seed: Some(42),
+            ..GameSettings::default()
+        };
+        let mut state = SnakeEngine::initial_state(&players, &settings);
+        // Drive snake[0] into the wall to force a death.
+        let pid0 = state.snakes[0].player_id;
+        let mut inputs = HashMap::new();
+        inputs.insert(
+            pid0,
+            SnakeInput {
+                direction: Direction::Up,
+            },
+        );
+        for _ in 0..ARENA_H + 2 {
+            if SnakeEngine::is_terminal(&state).is_some() {
+                break;
+            }
+            SnakeEngine::tick(&mut state, &inputs);
+        }
+        let outcome = SnakeEngine::is_terminal(&state);
+        assert!(
+            outcome.is_some(),
+            "game must be terminal after a snake dies"
+        );
+        match outcome.unwrap() {
+            GameOutcome::Win(pid) => {
+                assert!(players.contains(&pid), "winner must be one of the players")
+            }
+            GameOutcome::Draw => {}
+        }
+        // All dead snakes cannot be the sole alive snake.
+        let alive_count = state.snakes.iter().filter(|s| s.alive).count();
+        assert!(
+            alive_count <= 1,
+            "at most one snake can be alive at terminal"
+        );
+    }
 }
 
 // ============================================================
@@ -432,9 +771,20 @@ mod bot_regression {
     use gc_shared::game::checkers::{self, Checkers};
     use gc_shared::game::chess::{self, Chess};
     use gc_shared::game::connect4::{self, Connect4};
+    use gc_shared::game::snake::{self, Direction, SnakeEngine};
     use gc_shared::game::tictactoe::{self, TicTacToe};
-    use gc_shared::game::traits::GameEngine;
+    use gc_shared::game::traits::{GameEngine, RealtimeGameEngine};
     use gc_shared::types::{Difficulty, GameSettings, PlayerId};
+    use std::collections::HashMap;
+
+    fn dir_opposite(d: Direction) -> Direction {
+        match d {
+            Direction::Up => Direction::Down,
+            Direction::Down => Direction::Up,
+            Direction::Left => Direction::Right,
+            Direction::Right => Direction::Left,
+        }
+    }
 
     fn two_players() -> [PlayerId; 2] {
         [PlayerId::new(), PlayerId::new()]
@@ -543,6 +893,34 @@ mod bot_regression {
     }
 
     #[test]
+    fn snake_bot_moves_are_valid() {
+        // Run bot_move on 200 seeded initial states; direction must never be
+        // a 180-degree reversal of the snake's current direction.
+        for seed in 0u64..200 {
+            let players = two_players();
+            let settings = GameSettings {
+                seed: Some(seed),
+                ..GameSettings::default()
+            };
+            let state = SnakeEngine::initial_state(&players, &settings);
+            let pid0 = state.snakes[0].player_id;
+            let pid1 = state.snakes[1].player_id;
+            for &pid in &[pid0, pid1] {
+                let snake = state.snakes.iter().find(|s| s.player_id == pid).unwrap();
+                let current = snake.direction;
+                for &diff in &[Difficulty::Easy, Difficulty::Hard] {
+                    let mv = snake::bot_move(&state, pid, diff);
+                    assert_ne!(
+                        mv.direction,
+                        dir_opposite(current),
+                        "seed={seed} pid={pid:?} diff={diff:?}: bot returned 180 reversal"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn chess_easy_bot_game_no_illegal_moves() {
         // Easy-vs-Easy loop capped at 80 plies; every move must validate.
         let players = two_players();
@@ -559,6 +937,39 @@ mod bot_regression {
             );
             Chess::apply_move(&mut state, player, &mv);
         }
+    }
+
+    #[test]
+    fn snake_easy_bot_game_no_illegal_moves() {
+        // Both players driven by Easy bot for up to 400 ticks.
+        // Must not panic, and must either reach terminal or have alive snakes.
+        let players = two_players();
+        let settings = GameSettings {
+            seed: Some(12345),
+            ..GameSettings::default()
+        };
+        let mut state = SnakeEngine::initial_state(&players, &settings);
+        for _ in 0..400 {
+            if SnakeEngine::is_terminal(&state).is_some() {
+                break;
+            }
+            let mut inputs = HashMap::new();
+            for snake in &state.snakes {
+                if !snake.alive {
+                    continue;
+                }
+                let mv = snake::bot_move(&state, snake.player_id, Difficulty::Easy);
+                inputs.insert(snake.player_id, mv);
+            }
+            SnakeEngine::tick(&mut state, &inputs);
+        }
+        // Game either reached terminal or still has alive snakes — no panic is the key assertion.
+        let terminal = SnakeEngine::is_terminal(&state);
+        let alive = state.snakes.iter().any(|s| s.alive);
+        assert!(
+            terminal.is_some() || alive,
+            "game should be terminal or have alive snakes after bot run"
+        );
     }
 }
 

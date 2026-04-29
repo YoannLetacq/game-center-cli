@@ -47,6 +47,14 @@ you_lose = "You lose!"
 draw = "Draw!"
 rematch = "Rematch"
 leave = "Leave game"
+snake = "Snake"
+
+[snake]
+score = "Score: {p0} vs {p1}"
+you_crashed = "You crashed!"
+game_over = "Game Over"
+controls = "Arrows / WASD: move  |  Esc: leave  |  I: help"
+your_turn = "Your turn"
 
 [game_names]
 tictactoe = "Tic-Tac-Toe"

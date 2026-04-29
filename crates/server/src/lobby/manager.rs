@@ -1,13 +1,15 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, mpsc, watch};
+use tokio::task::JoinHandle;
 use tracing::info;
 
-use gc_shared::protocol::messages::RoomSummary;
-use gc_shared::types::{GameSettings, GameType, PlayerId, PlayerInfo, RoomId};
+use gc_shared::protocol::messages::{RoomSummary, ServerMsg};
+use gc_shared::types::{GameOutcome, GameSettings, GameType, PlayerId, PlayerInfo, RoomId};
 
+use crate::engine::realtime::{self, RealtimeGame};
 use crate::engine::turn_based::TurnBasedGame;
 
 use super::room::Room;
@@ -15,15 +17,40 @@ use super::room::Room;
 /// Room cleanup timeout: rooms with no players are removed after this duration.
 const EMPTY_ROOM_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Handle to the per-connection broadcast channels. Set once from main after
+/// the `ServerState` is wired up so realtime tick tasks can reach clients.
+pub type PlayerRegistry = Arc<RwLock<HashMap<PlayerId, mpsc::Sender<ServerMsg>>>>;
+
 /// Manages all active game rooms.
 ///
-/// Only game types supported by [`TurnBasedGame::is_supported`] can be created.
+/// A game type is creatable if either the turn-based or realtime engine
+/// supports it (see [`is_supported`]).
+#[allow(clippy::type_complexity)]
 pub struct LobbyManager {
     rooms: Arc<RwLock<HashMap<RoomId, Room>>>,
     /// Tracks which room each player is in.
     player_rooms: Arc<RwLock<HashMap<PlayerId, RoomId>>>,
-    /// Active games indexed by room ID.
+    /// Active turn-based games indexed by room ID.
     pub games: Arc<RwLock<HashMap<RoomId, TurnBasedGame>>>,
+
+    /// Active realtime games indexed by room ID.
+    pub realtime_games: Arc<RwLock<HashMap<RoomId, Arc<Mutex<RealtimeGame>>>>>,
+    /// Latest buffered input per player per realtime room (overwrites, no queue).
+    pub realtime_inputs: Arc<RwLock<HashMap<RoomId, Arc<Mutex<HashMap<PlayerId, Vec<u8>>>>>>>,
+    /// Cancellation senders for each realtime tick task.
+    pub tick_cancels: Arc<RwLock<HashMap<RoomId, watch::Sender<bool>>>>,
+    /// Detached tick task handles — kept so we can ensure graceful shutdown on cancel.
+    tick_tasks: Arc<RwLock<HashMap<RoomId, JoinHandle<()>>>>,
+
+    /// Set once by main.rs after constructing `ServerState`. Needed for realtime broadcasts.
+    players_registry: OnceLock<PlayerRegistry>,
+    /// Self-reference injected after `Arc::new` so tick tasks can call back.
+    self_arc: OnceLock<std::sync::Weak<LobbyManager>>,
+}
+
+/// Is the given game type playable on this server (turn-based OR realtime).
+pub fn is_supported(game_type: GameType) -> bool {
+    TurnBasedGame::is_supported(game_type) || RealtimeGame::is_supported(game_type)
 }
 
 #[allow(dead_code)]
@@ -33,7 +60,24 @@ impl LobbyManager {
             rooms: Arc::new(RwLock::new(HashMap::new())),
             player_rooms: Arc::new(RwLock::new(HashMap::new())),
             games: Arc::new(RwLock::new(HashMap::new())),
+            realtime_games: Arc::new(RwLock::new(HashMap::new())),
+            realtime_inputs: Arc::new(RwLock::new(HashMap::new())),
+            tick_cancels: Arc::new(RwLock::new(HashMap::new())),
+            tick_tasks: Arc::new(RwLock::new(HashMap::new())),
+            players_registry: OnceLock::new(),
+            self_arc: OnceLock::new(),
         }
+    }
+
+    /// Wire up the shared player registry and a weak self-reference. Must be called
+    /// once after the lobby is placed behind an `Arc`, before realtime games can start.
+    pub fn attach(self: &Arc<Self>, registry: PlayerRegistry) {
+        let _ = self.players_registry.set(registry);
+        let _ = self.self_arc.set(Arc::downgrade(self));
+    }
+
+    fn strong_self(&self) -> Option<Arc<LobbyManager>> {
+        self.self_arc.get().and_then(|w| w.upgrade())
     }
 
     /// Create a new room. Returns the room ID.
@@ -43,8 +87,7 @@ impl LobbyManager {
         settings: GameSettings,
         host: PlayerInfo,
     ) -> Result<RoomId, String> {
-        // Reject unsupported game types
-        if !TurnBasedGame::is_supported(game_type) {
+        if !is_supported(game_type) {
             return Err(format!("{game_type} is not yet available"));
         }
 
@@ -120,7 +163,7 @@ impl LobbyManager {
         Ok(players)
     }
 
-    /// Start a game in a room.
+    /// Start a game in a room. Dispatches to turn-based or realtime engine.
     pub async fn start_game(&self, room_id: RoomId) {
         let room_info = {
             let mut rooms = self.rooms.write().await;
@@ -144,16 +187,171 @@ impl LobbyManager {
             })
         };
 
-        if let Some((game_type, settings, player_ids)) = room_info
-            && let Some(game) = TurnBasedGame::new(game_type, &player_ids, &settings)
-        {
+        let Some((game_type, mut settings, player_ids)) = room_info else {
+            return;
+        };
+
+        if RealtimeGame::is_supported(game_type) {
+            // Fresh seed every start — rematches re-randomize food layout.
+            if settings.seed.is_none() {
+                settings.seed = Some(rand::random::<u64>());
+            }
+            if let Some(game) = RealtimeGame::new(game_type, &player_ids, &settings) {
+                self.start_realtime_game(room_id, game).await;
+                info!(%room_id, ?game_type, "realtime game started");
+            }
+        } else if let Some(game) = TurnBasedGame::new(game_type, &player_ids, &settings) {
             let mut games = self.games.write().await;
             games.insert(room_id, game);
             info!(%room_id, ?game_type, "game started");
         }
     }
 
-    /// Mark a game as finished and clean up its state.
+    async fn start_realtime_game(&self, room_id: RoomId, game: RealtimeGame) {
+        let Some(registry) = self.players_registry.get().cloned() else {
+            tracing::error!(%room_id, "player registry not attached; cannot start realtime game");
+            return;
+        };
+        let Some(lobby_arc) = self.strong_self() else {
+            tracing::error!(%room_id, "lobby self-ref missing; cannot start realtime game");
+            return;
+        };
+
+        // Broadcast initial snapshot so clients have a synchronized starting state
+        // before the first delta arrives.
+        let initial_snapshot = game.snapshot_bytes();
+        let recipients = game.players();
+        {
+            let reg = registry.read().await;
+            let msg = ServerMsg::GameStateUpdate {
+                tick: 0,
+                state_data: initial_snapshot,
+            };
+            for pid in &recipients {
+                if let Some(tx) = reg.get(pid) {
+                    let _ = tx.try_send(msg.clone());
+                }
+            }
+        }
+
+        let game_arc = Arc::new(Mutex::new(game));
+        let inputs_arc: Arc<Mutex<HashMap<PlayerId, Vec<u8>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+
+        {
+            let mut rg = self.realtime_games.write().await;
+            rg.insert(room_id, Arc::clone(&game_arc));
+        }
+        {
+            let mut ri = self.realtime_inputs.write().await;
+            ri.insert(room_id, Arc::clone(&inputs_arc));
+        }
+        {
+            let mut tc = self.tick_cancels.write().await;
+            tc.insert(room_id, cancel_tx);
+        }
+
+        let handle = realtime::spawn_tick_task(
+            room_id, game_arc, inputs_arc, registry, cancel_rx, lobby_arc,
+        );
+
+        let mut tasks = self.tick_tasks.write().await;
+        tasks.insert(room_id, handle);
+    }
+
+    /// Store the latest input bytes for a player in a realtime room.
+    /// Overwrites any previous pending input — no queueing.
+    pub async fn push_realtime_input(&self, room_id: RoomId, player_id: PlayerId, data: Vec<u8>) {
+        let inputs = {
+            let ri = self.realtime_inputs.read().await;
+            ri.get(&room_id).cloned()
+        };
+        if let Some(inputs) = inputs {
+            let mut guard = inputs.lock().unwrap_or_else(|e| e.into_inner());
+            guard.insert(player_id, data);
+        }
+    }
+
+    /// Is this room running a realtime game right now?
+    pub async fn is_realtime_room(&self, room_id: RoomId) -> bool {
+        let rg = self.realtime_games.read().await;
+        rg.contains_key(&room_id)
+    }
+
+    /// Clean up a realtime game's state after normal termination (game over / rematch).
+    pub async fn finish_realtime_game(&self, room_id: RoomId) {
+        let cancel = {
+            let mut tc = self.tick_cancels.write().await;
+            tc.remove(&room_id)
+        };
+        if let Some(tx) = cancel {
+            let _ = tx.send(true);
+        }
+        {
+            let mut rg = self.realtime_games.write().await;
+            rg.remove(&room_id);
+        }
+        {
+            let mut ri = self.realtime_inputs.write().await;
+            ri.remove(&room_id);
+        }
+        {
+            let mut tasks = self.tick_tasks.write().await;
+            tasks.remove(&room_id);
+            // Handle dropped; task will exit on its next select due to cancel signal.
+        }
+        {
+            let mut rooms = self.rooms.write().await;
+            if let Some(room) = rooms.get_mut(&room_id) {
+                room.state = gc_shared::types::RoomState::Finished;
+            }
+        }
+    }
+
+    /// Cancel a realtime game because a player left mid-game. Broadcasts GameOver
+    /// awarding the win to any remaining player, then cleans up.
+    pub async fn cancel_realtime_for_disconnect(&self, room_id: RoomId, leaver: PlayerId) {
+        let had_realtime = {
+            let rg = self.realtime_games.read().await;
+            rg.contains_key(&room_id)
+        };
+        if !had_realtime {
+            return;
+        }
+
+        // Determine winner from the remaining room roster (not from game state —
+        // the leaver may have already been marked dead by the engine).
+        let winner = {
+            let rooms = self.rooms.read().await;
+            rooms
+                .get(&room_id)
+                .and_then(|r| r.players.iter().find(|p| p.id != leaver).map(|p| p.id))
+        };
+
+        if let (Some(winner), Some(registry)) = (winner, self.players_registry.get().cloned()) {
+            let recipients: Vec<PlayerId> = {
+                let rooms = self.rooms.read().await;
+                rooms
+                    .get(&room_id)
+                    .map(|r| r.players.iter().map(|p| p.id).collect())
+                    .unwrap_or_default()
+            };
+            let msg = ServerMsg::GameOver {
+                outcome: GameOutcome::Win(winner),
+            };
+            let reg = registry.read().await;
+            for pid in &recipients {
+                if let Some(tx) = reg.get(pid) {
+                    let _ = tx.try_send(msg.clone());
+                }
+            }
+        }
+
+        self.finish_realtime_game(room_id).await;
+    }
+
+    /// Mark a turn-based game as finished and clean up its state.
     pub async fn finish_game(&self, room_id: RoomId) {
         {
             let mut games = self.games.write().await;
@@ -190,13 +388,29 @@ impl LobbyManager {
         };
 
         let mut game_aborted = false;
-        // Clean up game if room empties or player leaves mid-game
+        // Clean up turn-based game if room empties or player leaves mid-game
         {
             let mut games = self.games.write().await;
             if is_empty {
                 games.remove(&room_id);
             } else if games.contains_key(&room_id) {
                 games.remove(&room_id);
+                game_aborted = true;
+            }
+        }
+
+        // Realtime: tear down tick task + maps. cancel_realtime_for_disconnect
+        // handles the winner broadcast; for empty rooms just clean up silently.
+        let had_realtime = {
+            let rg = self.realtime_games.read().await;
+            rg.contains_key(&room_id)
+        };
+        if had_realtime {
+            if is_empty {
+                self.finish_realtime_game(room_id).await;
+            } else {
+                self.cancel_realtime_for_disconnect(room_id, player_id)
+                    .await;
                 game_aborted = true;
             }
         }
@@ -416,9 +630,20 @@ mod tests {
         let host = make_player("alice");
 
         let result = lobby
-            .create_room(GameType::Snake, GameSettings::default(), host)
+            .create_room(GameType::BlockBreaker, GameSettings::default(), host)
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not yet available"));
+    }
+
+    #[tokio::test]
+    async fn snake_room_accepted() {
+        let lobby = LobbyManager::new();
+        let host = make_player("alice");
+
+        let result = lobby
+            .create_room(GameType::Snake, GameSettings::default(), host)
+            .await;
+        assert!(result.is_ok(), "Snake should be supported (realtime)");
     }
 }

@@ -185,11 +185,11 @@ fn render_board(frame: &mut Frame, state: &ChessState, app: &App, area: Rect) {
     let side_in_check_king: Option<Position> = {
         let mut found = None;
         for side in [Side::White, Side::Black] {
-            if chess::in_check(state, side) {
-                if let Some(kpos) = chess::king_position(state, side) {
-                    found = Some(kpos);
-                    break;
-                }
+            if chess::in_check(state, side)
+                && let Some(kpos) = chess::king_position(state, side)
+            {
+                found = Some(kpos);
+                break;
             }
         }
         found

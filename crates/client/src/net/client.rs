@@ -60,6 +60,12 @@ pub enum NetEvent {
     GameStateUpdate {
         state_data: Vec<u8>,
     },
+    /// Realtime delta (Snake, Pacman) — incremental diff since previous tick.
+    GameDelta {
+        #[allow(dead_code)] // Tick number kept for future out-of-order logging/metrics.
+        tick: u64,
+        delta_data: Vec<u8>,
+    },
     GameOver {
         outcome: gc_shared::types::GameOutcome,
     },
@@ -330,6 +336,7 @@ fn dispatch_server_msg(msg: ServerMsg, event_tx: &std_mpsc::Sender<NetEvent>) {
         ServerMsg::PlayerJoined(info) => NetEvent::PlayerJoined(info),
         ServerMsg::PlayerLeft(id) => NetEvent::PlayerLeft(id),
         ServerMsg::GameStateUpdate { state_data, .. } => NetEvent::GameStateUpdate { state_data },
+        ServerMsg::GameDelta { tick, delta_data } => NetEvent::GameDelta { tick, delta_data },
         ServerMsg::GameOver { outcome } => NetEvent::GameOver { outcome },
         ServerMsg::Error { message, .. } => NetEvent::Error(message),
         ServerMsg::AuthFail { reason } => NetEvent::Error(reason),
