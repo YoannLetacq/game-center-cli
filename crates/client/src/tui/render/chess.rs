@@ -1,6 +1,4 @@
-use gc_shared::game::chess::{
-    self, ChessState, Piece, PieceKind, Position, Side,
-};
+use gc_shared::game::chess::{self, ChessState, Piece, PieceKind, Position, Side};
 use gc_shared::types::GameOutcome;
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -32,7 +30,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     // Header — turn / game over / check.
     let in_check = match app.game_state {
         Some(ClientGameState::Chess(ref s)) => {
-            let side = if s.current_turn == 0 { Side::White } else { Side::Black };
+            let side = if s.current_turn == 0 {
+                Side::White
+            } else {
+                Side::Black
+            };
             chess::in_check(s, side)
         }
         _ => false,
@@ -264,18 +266,18 @@ fn piece_glyph(square: Option<Piece>) -> (char, Color) {
         None => (' ', Color::White),
         Some(Piece { kind, side }) => {
             let glyph = match (side, kind) {
-                (Side::White, PieceKind::King)   => '\u{2654}',
-                (Side::White, PieceKind::Queen)  => '\u{2655}',
-                (Side::White, PieceKind::Rook)   => '\u{2656}',
+                (Side::White, PieceKind::King) => '\u{2654}',
+                (Side::White, PieceKind::Queen) => '\u{2655}',
+                (Side::White, PieceKind::Rook) => '\u{2656}',
                 (Side::White, PieceKind::Bishop) => '\u{2657}',
                 (Side::White, PieceKind::Knight) => '\u{2658}',
-                (Side::White, PieceKind::Pawn)   => '\u{2659}',
-                (Side::Black, PieceKind::King)   => '\u{265A}',
-                (Side::Black, PieceKind::Queen)  => '\u{265B}',
-                (Side::Black, PieceKind::Rook)   => '\u{265C}',
+                (Side::White, PieceKind::Pawn) => '\u{2659}',
+                (Side::Black, PieceKind::King) => '\u{265A}',
+                (Side::Black, PieceKind::Queen) => '\u{265B}',
+                (Side::Black, PieceKind::Rook) => '\u{265C}',
                 (Side::Black, PieceKind::Bishop) => '\u{265D}',
                 (Side::Black, PieceKind::Knight) => '\u{265E}',
-                (Side::Black, PieceKind::Pawn)   => '\u{265F}',
+                (Side::Black, PieceKind::Pawn) => '\u{265F}',
             };
             let color = match side {
                 Side::White => Color::White,
