@@ -879,6 +879,115 @@ mod engine_invariants {
     }
 
     #[test]
+    fn snake_multiplayer_equal_score_on_death_is_draw() {
+        use gc_shared::game::snake::SnakeArena;
+        // Two snakes, both dead, both with score 3 → outcome must be Draw.
+        let p0 = PlayerId::new();
+        let p1 = PlayerId::new();
+        let body0 = vec![gc_shared::game::snake::Position { x: 5, y: 5 }]
+            .into_iter()
+            .collect();
+        let body1 = vec![gc_shared::game::snake::Position { x: 10, y: 5 }]
+            .into_iter()
+            .collect();
+        let state = SnakeState {
+            arenas: vec![
+                SnakeArena {
+                    owner: Some(p0),
+                    arena_w: ARENA_W,
+                    arena_h: ARENA_H,
+                    snakes: vec![Snake {
+                        player_id: p0,
+                        body: body0,
+                        direction: Direction::Right,
+                        pending_direction: None,
+                        alive: false,
+                        score: 3,
+                    }],
+                    food: vec![],
+                    rng_state: 0,
+                },
+                SnakeArena {
+                    owner: Some(p1),
+                    arena_w: ARENA_W,
+                    arena_h: ARENA_H,
+                    snakes: vec![Snake {
+                        player_id: p1,
+                        body: body1,
+                        direction: Direction::Right,
+                        pending_direction: None,
+                        alive: false,
+                        score: 3,
+                    }],
+                    food: vec![],
+                    rng_state: 0,
+                },
+            ],
+            tick: 100,
+            rng_seed: 0,
+            game_over: None,
+        };
+        let outcome = SnakeEngine::is_terminal(&state).expect("expected terminal");
+        assert!(matches!(outcome, GameOutcome::Draw), "got {:?}", outcome);
+    }
+
+    #[test]
+    fn snake_multiplayer_dead_snake_with_higher_score_wins() {
+        use gc_shared::game::snake::SnakeArena;
+        // p0 is dead but had eaten 5 food; p1 is alive with 1 food.
+        // The longer (higher-score) snake wins, even though it's dead.
+        let p0 = PlayerId::new();
+        let p1 = PlayerId::new();
+        let body0 = vec![gc_shared::game::snake::Position { x: 5, y: 5 }]
+            .into_iter()
+            .collect();
+        let body1 = vec![gc_shared::game::snake::Position { x: 10, y: 5 }]
+            .into_iter()
+            .collect();
+        let state = SnakeState {
+            arenas: vec![
+                SnakeArena {
+                    owner: Some(p0),
+                    arena_w: ARENA_W,
+                    arena_h: ARENA_H,
+                    snakes: vec![Snake {
+                        player_id: p0,
+                        body: body0,
+                        direction: Direction::Right,
+                        pending_direction: None,
+                        alive: false,
+                        score: 5,
+                    }],
+                    food: vec![],
+                    rng_state: 0,
+                },
+                SnakeArena {
+                    owner: Some(p1),
+                    arena_w: ARENA_W,
+                    arena_h: ARENA_H,
+                    snakes: vec![Snake {
+                        player_id: p1,
+                        body: body1,
+                        direction: Direction::Right,
+                        pending_direction: None,
+                        alive: true,
+                        score: 1,
+                    }],
+                    food: vec![],
+                    rng_state: 0,
+                },
+            ],
+            tick: 100,
+            rng_seed: 0,
+            game_over: None,
+        };
+        match SnakeEngine::is_terminal(&state).expect("expected terminal") {
+            GameOutcome::Win(pid) => assert_eq!(pid, p0, "longer snake should win"),
+            other => panic!("expected Win(p0), got {:?}", other),
+        }
+    }
+
+    #[test]
     fn snake_multiplayer_initial_state_is_not_terminal() {
         // Regression: a fresh 2-player Snake game must not start in a terminal
         // state, otherwise clients see "instant lose" the moment the room fills.

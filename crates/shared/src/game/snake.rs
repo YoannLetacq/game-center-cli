@@ -539,49 +539,39 @@ fn compute_terminal(state: &SnakeState) -> Option<GameOutcome> {
             _ => None,
         }
     } else {
-        // Multiplayer mode: game ends when ALL owner snakes are dead.
-        let alive_owners: Vec<(PlayerId, u32)> = state
+        // Multiplayer mode: each player has their own arena and can only die
+        // on their own walls/self. The game ends as soon as ANY snake dies —
+        // the outcome is determined by length (score), not by who survived.
+        // Equal length is a draw, so two snakes that die on the same tick with
+        // the same score correctly resolve to a draw.
+        let scores: Vec<(PlayerId, u32, bool)> = state
             .arenas
             .iter()
             .filter_map(|a| {
                 let pid = a.owner?;
                 let snake = a.snakes.first()?;
-                snake.alive.then_some((pid, snake.score))
+                Some((pid, snake.score, snake.alive))
             })
             .collect();
 
-        match alive_owners.len() {
-            0 => {
-                // All dead — determine winner by score.
-                let scores: Vec<(PlayerId, u32)> = state
-                    .arenas
-                    .iter()
-                    .filter_map(|a| {
-                        let pid = a.owner?;
-                        let snake = a.snakes.first()?;
-                        Some((pid, snake.score))
-                    })
-                    .collect();
+        if scores.is_empty() {
+            return None;
+        }
+        let any_dead = scores.iter().any(|(_, _, alive)| !alive);
+        if !any_dead {
+            return None;
+        }
 
-                if scores.is_empty() {
-                    return Some(GameOutcome::Draw);
-                }
+        let max_score = scores.iter().map(|(_, s, _)| *s).max().unwrap_or(0);
+        let winners: Vec<PlayerId> = scores
+            .iter()
+            .filter(|(_, s, _)| *s == max_score)
+            .map(|(pid, _, _)| *pid)
+            .collect();
 
-                let max_score = scores.iter().map(|(_, s)| s).max().copied().unwrap_or(0);
-                let winners: Vec<PlayerId> = scores
-                    .iter()
-                    .filter(|(_, s)| *s == max_score)
-                    .map(|(pid, _)| *pid)
-                    .collect();
-
-                match winners.len() {
-                    0 => Some(GameOutcome::Draw),
-                    1 => Some(GameOutcome::Win(winners[0])),
-                    _ => Some(GameOutcome::Draw), // Tied scores.
-                }
-            }
-            1 => Some(GameOutcome::Win(alive_owners[0].0)),
-            _ => None, // Still playing.
+        match winners.len() {
+            1 => Some(GameOutcome::Win(winners[0])),
+            _ => Some(GameOutcome::Draw),
         }
     }
 }

@@ -631,38 +631,52 @@ async fn handle_client_msg(
             if *accept {
                 state.lobby.start_game(room_id).await;
 
+                // Turn-based: encode the fresh state and pair RematchAccepted
+                // with the initial GameStateUpdate for every player.
                 let state_data = {
                     let games = state.lobby.games.read().await;
                     games.get(&room_id).map(|g| g.encode_state())
                 };
-
-                match state_data {
-                    Some(state_data) => {
-                        let broadcasts = room_players
-                            .iter()
-                            .flat_map(|p| {
-                                vec![
-                                    (p.id, ServerMsg::RematchAccepted),
-                                    (
-                                        p.id,
-                                        ServerMsg::GameStateUpdate {
-                                            tick: 0,
-                                            state_data: state_data.clone(),
-                                        },
-                                    ),
-                                ]
-                            })
-                            .collect();
-                        HandleResult {
-                            response: None,
-                            broadcasts,
-                        }
-                    }
-                    None => HandleResult::reply(ServerMsg::Error {
-                        code: 500,
-                        message: "failed to start rematch".to_string(),
-                    }),
+                if let Some(state_data) = state_data {
+                    let broadcasts = room_players
+                        .iter()
+                        .flat_map(|p| {
+                            vec![
+                                (p.id, ServerMsg::RematchAccepted),
+                                (
+                                    p.id,
+                                    ServerMsg::GameStateUpdate {
+                                        tick: 0,
+                                        state_data: state_data.clone(),
+                                    },
+                                ),
+                            ]
+                        })
+                        .collect();
+                    return HandleResult {
+                        response: None,
+                        broadcasts,
+                    };
                 }
+
+                // Realtime: start_realtime_game already broadcast the initial
+                // snapshot via the player registry, so we only need to signal
+                // RematchAccepted.
+                if state.lobby.is_realtime_room(room_id).await {
+                    let broadcasts = room_players
+                        .iter()
+                        .map(|p| (p.id, ServerMsg::RematchAccepted))
+                        .collect();
+                    return HandleResult {
+                        response: None,
+                        broadcasts,
+                    };
+                }
+
+                HandleResult::reply(ServerMsg::Error {
+                    code: 500,
+                    message: "failed to start rematch".to_string(),
+                })
             } else {
                 // Broadcast decline to all players, then clean up the room
                 let broadcasts = room_players
