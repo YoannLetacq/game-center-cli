@@ -402,6 +402,12 @@ impl App {
             }
             self.game_state = Some(state);
             if self.screen == Screen::Room {
+                // A fresh online game is starting — clear any leftover game-over
+                // state from a previous match so the renderer doesn't flash a
+                // stale "you lose" banner on top of the new board.
+                self.game_over = None;
+                self.rematch_pending = false;
+                self.rematch_incoming = false;
                 self.screen = Screen::InGame;
                 self.cursor_row = match self.selected_game_type {
                     GameType::Connect4 => 0, // cursor not used for row in Connect4

@@ -877,6 +877,44 @@ mod engine_invariants {
             "at most one snake can be alive at terminal"
         );
     }
+
+    #[test]
+    fn snake_multiplayer_initial_state_is_not_terminal() {
+        // Regression: a fresh 2-player Snake game must not start in a terminal
+        // state, otherwise clients see "instant lose" the moment the room fills.
+        let p0 = PlayerId::new();
+        let p1 = PlayerId::new();
+        let settings = GameSettings {
+            seed: Some(42),
+            ..GameSettings::default()
+        };
+        let state = SnakeEngine::initial_multiplayer_state(&[p0, p1], &settings);
+        assert_eq!(state.arenas.len(), 2, "expected one arena per player");
+        for arena in &state.arenas {
+            assert!(
+                arena.owner.is_some(),
+                "multiplayer arena must have an owner"
+            );
+            assert_eq!(arena.snakes.len(), 1);
+            assert!(arena.snakes[0].alive, "snake must start alive");
+        }
+        assert!(
+            SnakeEngine::is_terminal(&state).is_none(),
+            "multiplayer Snake must not be terminal at tick 0"
+        );
+
+        // First few ticks with no input also must not terminate — both snakes
+        // glide forward in their own arenas without colliding.
+        let mut state = state;
+        for _ in 0..5 {
+            SnakeEngine::tick(&mut state, &HashMap::new());
+            assert!(
+                SnakeEngine::is_terminal(&state).is_none(),
+                "multiplayer Snake terminated unexpectedly at tick {}",
+                state.tick
+            );
+        }
+    }
 }
 
 // ============================================================

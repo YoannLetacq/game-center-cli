@@ -8,14 +8,26 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::tui::app::{App, ClientGameState};
 
-// Cells are 2 chars wide × 1 char tall — keeps the 32×18 arena roughly
-// square on standard terminals (64 cols × 18 rows).
-const CELL_W: u16 = 2;
+// Solo: 2 chars per cell keeps the 32×18 arena roughly square (64 cols).
+// Multiplayer: 1 char per cell so two arenas fit side-by-side at 80 cols
+// (each arena = 32 + borders ≈ 34 cols × 2 = 68 cols total).
+const CELL_W_SOLO: u16 = 2;
+const CELL_W_MULTI: u16 = 1;
 
 pub fn render(frame: &mut Frame, app: &App) {
     let t = &app.translator;
 
-    let arena_width = ARENA_W * CELL_W + 2;
+    let is_multi = matches!(
+        app.game_state.as_ref(),
+        Some(ClientGameState::Snake(s)) if s.arenas.len() > 1
+    );
+    let cell_w = if is_multi { CELL_W_MULTI } else { CELL_W_SOLO };
+    // Outer rect: solo = 1 arena, multi = 2 arenas side-by-side.
+    let arena_width = if is_multi {
+        2 * (ARENA_W * cell_w + 2)
+    } else {
+        ARENA_W * cell_w + 2
+    };
     let arena_height = ARENA_H + 2;
 
     let chunks = Layout::default()
@@ -64,7 +76,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // Arena — fixed size, centered within available space.
     let arena_area = fixed_arena_rect(chunks[1], arena_width, arena_height);
-    render_arena(frame, state, app, arena_area);
+    render_arena(frame, state, app, arena_area, cell_w);
 
     // Footer.
     let footer_text = if app.rematch_pending {
@@ -124,16 +136,18 @@ fn fixed_arena_rect(area: Rect, w: u16, h: u16) -> Rect {
     Rect::new(x, y, w.min(area.width), h.min(area.height))
 }
 
-fn render_arena(frame: &mut Frame, state: &SnakeState, app: &App, area: Rect) {
+fn render_arena(frame: &mut Frame, state: &SnakeState, app: &App, area: Rect, cell_w: u16) {
     // Check if solo (1 arena) or multiplayer (2+ arenas)
     if state.arenas.len() == 1 {
         // Solo mode: render single arena
-        render_single_arena(frame, &state.arenas[0], app, area, None);
+        render_single_arena(frame, &state.arenas[0], app, area, None, cell_w);
     } else {
-        // Multiplayer mode: render two side-by-side
+        // Multiplayer mode: pin each half to the exact arena width so the
+        // arena always fits, even if the surrounding area is wider.
+        let half = ARENA_W * cell_w + 2;
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .constraints([Constraint::Length(half), Constraint::Length(half)])
             .split(area);
 
         let my_arena = state
@@ -147,8 +161,8 @@ fn render_arena(frame: &mut Frame, state: &SnakeState, app: &App, area: Rect) {
             .find(|a| a.owner != app.my_player_id)
             .unwrap_or(&state.arenas[0]);
 
-        render_single_arena(frame, my_arena, app, chunks[0], Some(" You "));
-        render_single_arena(frame, opp_arena, app, chunks[1], Some(" Opponent "));
+        render_single_arena(frame, my_arena, app, chunks[0], Some(" You "), cell_w);
+        render_single_arena(frame, opp_arena, app, chunks[1], Some(" Opponent "), cell_w);
     }
 }
 
@@ -158,6 +172,7 @@ fn render_single_arena(
     app: &App,
     area: Rect,
     title_override: Option<&str>,
+    cell_w: u16,
 ) {
     let title = title_override.unwrap_or(" Snake ");
     let block = Block::default()
@@ -187,6 +202,12 @@ fn render_single_arena(
     let food: std::collections::HashSet<(u16, u16)> =
         arena.food.iter().map(|p| (p.x, p.y)).collect();
 
+    let (head_g, body_g, food_g, blank_g) = if cell_w == 1 {
+        ("█", "▓", "●", " ")
+    } else {
+        ("██", "▓▓", "●●", "  ")
+    };
+
     let mut lines: Vec<Line> = Vec::with_capacity(ARENA_H as usize);
     for y in 0..ARENA_H {
         let mut spans: Vec<Span> = Vec::with_capacity(ARENA_W as usize);
@@ -194,15 +215,15 @@ fn render_single_arena(
             let key = (x, y);
             if let Some(color) = heads.get(&key) {
                 spans.push(Span::styled(
-                    "██",
+                    head_g,
                     Style::default().fg(*color).add_modifier(Modifier::BOLD),
                 ));
             } else if let Some(color) = bodies.get(&key) {
-                spans.push(Span::styled("▓▓", Style::default().fg(*color)));
+                spans.push(Span::styled(body_g, Style::default().fg(*color)));
             } else if food.contains(&key) {
-                spans.push(Span::styled("●●", Style::default().fg(Color::Yellow)));
+                spans.push(Span::styled(food_g, Style::default().fg(Color::Yellow)));
             } else {
-                spans.push(Span::raw("  "));
+                spans.push(Span::raw(blank_g));
             }
         }
         lines.push(Line::from(spans));
