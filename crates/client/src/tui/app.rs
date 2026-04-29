@@ -739,6 +739,7 @@ impl App {
         let expected = state.tick + 1;
         if delta.tick != expected {
             // Out of order — wait for the next snapshot.
+            tracing::warn!(expected, got = delta.tick, "snake delta out of order, dropping");
             return;
         }
 
@@ -905,7 +906,7 @@ impl App {
                     (Square::Man(s) | Square::King(s), side2) if s == side2
                 );
                 if !matches_side {
-                    self.status_message = Some("Select one of your own pieces".to_string());
+                    self.status_message = Some(self.translator.get("checkers.error_own_piece").to_string());
                     return None;
                 }
                 self.checkers_input.stage = CheckersInputStage::TargetSelect;
@@ -940,7 +941,7 @@ impl App {
                     self.checkers_input.stage = CheckersInputStage::Chaining;
                     self.checkers_input.partial_path = tentative;
                 } else {
-                    self.status_message = Some("Illegal target — selection cleared".to_string());
+                    self.status_message = Some(self.translator.get("checkers.error_illegal_target").to_string());
                     self.checkers_input.reset();
                 }
                 None
@@ -1387,5 +1388,38 @@ mod tests {
         app.start_solo_game(Difficulty::Hard);
         app.leave_solo_game();
         assert_eq!(app.screen, Screen::Lobby);
+    }
+
+    #[test]
+    fn snake_delta_out_of_order_drops_silently() {
+        let mut app = test_app();
+        let p0 = PlayerId::new();
+        let p1 = PlayerId::new();
+        app.my_player_id = Some(p0);
+        app.game_mode = GameMode::Online;
+
+        // Create initial snake state at tick 5
+        let mut state = SnakeEngine::initial_state(&[p0, p1], &GameSettings::default());
+        state.tick = 5;
+        app.game_state = Some(ClientGameState::Snake(state));
+        app.snake_last_applied_tick = Some(5);
+
+        // Feed a delta with tick=5 (should be tick=6), which is out-of-order
+        let delta = SnakeDelta {
+            tick: 5,
+            arenas: vec![],
+            game_over: None,
+        };
+        let delta_data = gc_shared::protocol::codec::encode(&delta).unwrap();
+
+        // Call on_snake_delta — it should drop the delta
+        app.on_snake_delta(&delta_data);
+
+        // Verify the state wasn't advanced (tick should still be 5)
+        let Some(ClientGameState::Snake(ref state)) = app.game_state else {
+            panic!("expected Snake state");
+        };
+        assert_eq!(state.tick, 5);
+        assert_eq!(app.snake_last_applied_tick, Some(5));
     }
 }

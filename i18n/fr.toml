@@ -65,6 +65,16 @@ snake = "Serpent"
 blockbreaker = "Casse-briques"
 pacman = "Pacman"
 
+[chess]
+hint_promote = "Promouvoir : D=Dame T=Tour F=Fou C=Cavalier | Esc/Backspace : annuler"
+hint_select_target = "Sélectionner la case cible (Entrée) | Backspace : effacer"
+hint_select_piece = "Sélectionner votre pièce (flèches + Entrée)"
+hint_move_select = "Flèches : déplacer | Entrée : sélectionner/cible | Backspace : effacer | Esc : quitter"
+
+[checkers]
+error_own_piece = "Sélectionnez l'une de vos propres pièces"
+error_illegal_target = "Cible illégale — sélection effacée"
+
 [errors]
 connection_failed = "Échec de la connexion"
 auth_failed = "Échec de l'authentification : {0}"

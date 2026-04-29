@@ -100,13 +100,13 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // Hint line.
     let hint_text = if app.chess_input.pending_promotion.is_some() {
-        "Promote: Q=Queen R=Rook B=Bishop N=Knight | Esc/Backspace: cancel".to_string()
+        t.get("chess.hint_promote").to_string()
     } else if app.game_over.is_some() {
         String::new()
     } else if app.chess_input.selected_from.is_some() {
-        "Select target square (Enter) | Backspace: clear".to_string()
+        t.get("chess.hint_select_target").to_string()
     } else {
-        "Select your piece (arrows + Enter)".to_string()
+        t.get("chess.hint_select_piece").to_string()
     };
     let hint = Paragraph::new(hint_text)
         .alignment(Alignment::Center)
@@ -128,7 +128,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             t.get("game.leave")
         )
     } else {
-        "Arrows: move | Enter: select/target | Backspace: clear | Esc: leave".to_string()
+        t.get("chess.hint_move_select").to_string()
     };
     let footer = Paragraph::new(footer_text)
         .alignment(Alignment::Center)

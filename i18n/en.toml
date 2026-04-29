@@ -65,6 +65,16 @@ snake = "Snake"
 blockbreaker = "Block Breaker"
 pacman = "Pacman"
 
+[chess]
+hint_promote = "Promote: Q=Queen R=Rook B=Bishop N=Knight | Esc/Backspace: cancel"
+hint_select_target = "Select target square (Enter) | Backspace: clear"
+hint_select_piece = "Select your piece (arrows + Enter)"
+hint_move_select = "Arrows: move | Enter: select/target | Backspace: clear | Esc: leave"
+
+[checkers]
+error_own_piece = "Select one of your own pieces"
+error_illegal_target = "Illegal target — selection cleared"
+
 [errors]
 connection_failed = "Connection failed"
 auth_failed = "Authentication failed: {0}"
