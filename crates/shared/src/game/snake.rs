@@ -58,7 +58,7 @@ pub struct SnakeArena {
     pub owner: Option<PlayerId>, // None for solo arena, Some(pid) for multiplayer
     pub arena_w: u16,
     pub arena_h: u16,
-    pub snakes: Vec<Snake>,      // 1+ snakes (solo: player + bot; multiplayer: just owner)
+    pub snakes: Vec<Snake>, // 1+ snakes (solo: player + bot; multiplayer: just owner)
     pub food: Vec<Position>,
     pub rng_state: u64,
 }
@@ -116,8 +116,14 @@ impl SnakeEngine {
                 body: {
                     let mut body = VecDeque::with_capacity(3);
                     body.push_back(Position { x: w / 2, y: mid });
-                    body.push_back(Position { x: w / 2 - 1, y: mid });
-                    body.push_back(Position { x: w / 2 - 2, y: mid });
+                    body.push_back(Position {
+                        x: w / 2 - 1,
+                        y: mid,
+                    });
+                    body.push_back(Position {
+                        x: w / 2 - 2,
+                        y: mid,
+                    });
                     body
                 },
                 direction: Direction::Right,
@@ -315,7 +321,9 @@ fn tick_arena(arena: &mut SnakeArena, inputs: &HashMap<PlayerId, SnakeInput>) ->
         if !snake.alive || will_die[i] {
             continue;
         }
-        if let Some(head) = new_heads[i] && arena.food.contains(&head) {
+        if let Some(head) = new_heads[i]
+            && arena.food.contains(&head)
+        {
             grows[i] = true;
         }
     }
@@ -890,7 +898,10 @@ mod tests {
                 },
             );
         }
-        assert!(!state.arenas[0].snakes[0].alive, "snake should have hit the wall");
+        assert!(
+            !state.arenas[0].snakes[0].alive,
+            "snake should have hit the wall"
+        );
     }
 
     #[test]
@@ -1011,7 +1022,11 @@ mod tests {
             game_over: None,
         };
         let delta = SnakeEngine::tick(&mut state, &HashMap::new());
-        assert_eq!(state.arenas[0].snakes[0].body.len(), 3, "snake should have grown");
+        assert_eq!(
+            state.arenas[0].snakes[0].body.len(),
+            3,
+            "snake should have grown"
+        );
         assert_eq!(state.arenas[0].snakes[0].score, 1);
         assert!(delta.arenas[0].grew.contains(&pid));
         assert_eq!(delta.arenas[0].eaten_food, vec![food]);

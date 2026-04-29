@@ -145,31 +145,85 @@ impl GameEngine for Chess {
         let mut board = [[None; 8]; 8];
 
         // White back rank (row 0)
-        board[0][0] = Some(Piece { kind: PieceKind::Rook,   side: Side::White });
-        board[0][1] = Some(Piece { kind: PieceKind::Knight, side: Side::White });
-        board[0][2] = Some(Piece { kind: PieceKind::Bishop, side: Side::White });
-        board[0][3] = Some(Piece { kind: PieceKind::Queen,  side: Side::White });
-        board[0][4] = Some(Piece { kind: PieceKind::King,   side: Side::White });
-        board[0][5] = Some(Piece { kind: PieceKind::Bishop, side: Side::White });
-        board[0][6] = Some(Piece { kind: PieceKind::Knight, side: Side::White });
-        board[0][7] = Some(Piece { kind: PieceKind::Rook,   side: Side::White });
+        board[0][0] = Some(Piece {
+            kind: PieceKind::Rook,
+            side: Side::White,
+        });
+        board[0][1] = Some(Piece {
+            kind: PieceKind::Knight,
+            side: Side::White,
+        });
+        board[0][2] = Some(Piece {
+            kind: PieceKind::Bishop,
+            side: Side::White,
+        });
+        board[0][3] = Some(Piece {
+            kind: PieceKind::Queen,
+            side: Side::White,
+        });
+        board[0][4] = Some(Piece {
+            kind: PieceKind::King,
+            side: Side::White,
+        });
+        board[0][5] = Some(Piece {
+            kind: PieceKind::Bishop,
+            side: Side::White,
+        });
+        board[0][6] = Some(Piece {
+            kind: PieceKind::Knight,
+            side: Side::White,
+        });
+        board[0][7] = Some(Piece {
+            kind: PieceKind::Rook,
+            side: Side::White,
+        });
         // White pawns (row 1)
         for sq in &mut board[1] {
-            *sq = Some(Piece { kind: PieceKind::Pawn, side: Side::White });
+            *sq = Some(Piece {
+                kind: PieceKind::Pawn,
+                side: Side::White,
+            });
         }
         // Black pawns (row 6)
         for sq in &mut board[6] {
-            *sq = Some(Piece { kind: PieceKind::Pawn, side: Side::Black });
+            *sq = Some(Piece {
+                kind: PieceKind::Pawn,
+                side: Side::Black,
+            });
         }
         // Black back rank (row 7)
-        board[7][0] = Some(Piece { kind: PieceKind::Rook,   side: Side::Black });
-        board[7][1] = Some(Piece { kind: PieceKind::Knight, side: Side::Black });
-        board[7][2] = Some(Piece { kind: PieceKind::Bishop, side: Side::Black });
-        board[7][3] = Some(Piece { kind: PieceKind::Queen,  side: Side::Black });
-        board[7][4] = Some(Piece { kind: PieceKind::King,   side: Side::Black });
-        board[7][5] = Some(Piece { kind: PieceKind::Bishop, side: Side::Black });
-        board[7][6] = Some(Piece { kind: PieceKind::Knight, side: Side::Black });
-        board[7][7] = Some(Piece { kind: PieceKind::Rook,   side: Side::Black });
+        board[7][0] = Some(Piece {
+            kind: PieceKind::Rook,
+            side: Side::Black,
+        });
+        board[7][1] = Some(Piece {
+            kind: PieceKind::Knight,
+            side: Side::Black,
+        });
+        board[7][2] = Some(Piece {
+            kind: PieceKind::Bishop,
+            side: Side::Black,
+        });
+        board[7][3] = Some(Piece {
+            kind: PieceKind::Queen,
+            side: Side::Black,
+        });
+        board[7][4] = Some(Piece {
+            kind: PieceKind::King,
+            side: Side::Black,
+        });
+        board[7][5] = Some(Piece {
+            kind: PieceKind::Bishop,
+            side: Side::Black,
+        });
+        board[7][6] = Some(Piece {
+            kind: PieceKind::Knight,
+            side: Side::Black,
+        });
+        board[7][7] = Some(Piece {
+            kind: PieceKind::Rook,
+            side: Side::Black,
+        });
 
         let hash = position_hash(&board, 0, &CastleRights::all(), None);
         ChessState {
@@ -276,8 +330,14 @@ pub fn is_square_attacked(board: &[[Option<Piece>; 8]; 8], pos: Position, by_sid
 
     // Knight attacks
     for (dr, dc) in [
-        (-2i32, -1i32), (-2, 1), (-1, -2), (-1, 2),
-        (1, -2), (1, 2), (2, -1), (2, 1),
+        (-2i32, -1i32),
+        (-2, 1),
+        (-1, -2),
+        (-1, 2),
+        (1, -2),
+        (1, 2),
+        (2, -1),
+        (2, 1),
     ] {
         let nr = r + dr;
         let nc = c + dc;
@@ -296,7 +356,10 @@ pub fn is_square_attacked(board: &[[Option<Piece>; 8]; 8], pos: Position, by_sid
         let mut nc = c + dc;
         while in_bounds(nr, nc) {
             match board[nr as usize][nc as usize] {
-                Some(p) if p.side == by_side && matches!(p.kind, PieceKind::Bishop | PieceKind::Queen) => {
+                Some(p)
+                    if p.side == by_side
+                        && matches!(p.kind, PieceKind::Bishop | PieceKind::Queen) =>
+                {
                     return true;
                 }
                 Some(_) => break,
@@ -313,7 +376,10 @@ pub fn is_square_attacked(board: &[[Option<Piece>; 8]; 8], pos: Position, by_sid
         let mut nc = c + dc;
         while in_bounds(nr, nc) {
             match board[nr as usize][nc as usize] {
-                Some(p) if p.side == by_side && matches!(p.kind, PieceKind::Rook | PieceKind::Queen) => {
+                Some(p)
+                    if p.side == by_side
+                        && matches!(p.kind, PieceKind::Rook | PieceKind::Queen) =>
+                {
                     return true;
                 }
                 Some(_) => break,
@@ -410,7 +476,11 @@ fn pseudo_moves_for_piece(
                 if nr == promo_row {
                     push_promotions(from, Position::new(nr as u8, nc as u8), out);
                 } else {
-                    out.push(ChessMove { from, to: Position::new(nr as u8, nc as u8), promotion: None });
+                    out.push(ChessMove {
+                        from,
+                        to: Position::new(nr as u8, nc as u8),
+                        promotion: None,
+                    });
                     // Double step from starting rank
                     if r == start_row {
                         let nr2 = r + 2 * dir;
@@ -451,8 +521,14 @@ fn pseudo_moves_for_piece(
 
         PieceKind::Knight => {
             for (dr, dc) in [
-                (-2i32, -1i32), (-2, 1), (-1, -2), (-1, 2),
-                (1, -2), (1, 2), (2, -1), (2, 1),
+                (-2i32, -1i32),
+                (-2, 1),
+                (-1, -2),
+                (-1, 2),
+                (1, -2),
+                (1, 2),
+                (2, -1),
+                (2, 1),
             ] {
                 let nr = r + dr;
                 let nc = c + dc;
@@ -470,11 +546,23 @@ fn pseudo_moves_for_piece(
         }
 
         PieceKind::Bishop => {
-            slide_moves(state, from, side, &[(-1i32, -1i32), (-1, 1), (1, -1), (1, 1)], out);
+            slide_moves(
+                state,
+                from,
+                side,
+                &[(-1i32, -1i32), (-1, 1), (1, -1), (1, 1)],
+                out,
+            );
         }
 
         PieceKind::Rook => {
-            slide_moves(state, from, side, &[(-1i32, 0i32), (1, 0), (0, -1), (0, 1)], out);
+            slide_moves(
+                state,
+                from,
+                side,
+                &[(-1i32, 0i32), (1, 0), (0, -1), (0, 1)],
+                out,
+            );
         }
 
         PieceKind::Queen => {
@@ -482,7 +570,16 @@ fn pseudo_moves_for_piece(
                 state,
                 from,
                 side,
-                &[(-1i32, -1i32), (-1, 1), (1, -1), (1, 1), (-1, 0), (1, 0), (0, -1), (0, 1)],
+                &[
+                    (-1i32, -1i32),
+                    (-1, 1),
+                    (1, -1),
+                    (1, 1),
+                    (-1, 0),
+                    (1, 0),
+                    (0, -1),
+                    (0, 1),
+                ],
                 out,
             );
         }
@@ -526,8 +623,16 @@ fn pseudo_moves_for_piece(
                     && rook_at(7)
                     && state.board[back_row as usize][5].is_none()
                     && state.board[back_row as usize][6].is_none()
-                    && !is_square_attacked(&state.board, Position::new(back_row as u8, 5), side.opponent())
-                    && !is_square_attacked(&state.board, Position::new(back_row as u8, 6), side.opponent())
+                    && !is_square_attacked(
+                        &state.board,
+                        Position::new(back_row as u8, 5),
+                        side.opponent(),
+                    )
+                    && !is_square_attacked(
+                        &state.board,
+                        Position::new(back_row as u8, 6),
+                        side.opponent(),
+                    )
                 {
                     out.push(ChessMove {
                         from,
@@ -541,8 +646,16 @@ fn pseudo_moves_for_piece(
                     && state.board[back_row as usize][3].is_none()
                     && state.board[back_row as usize][2].is_none()
                     && state.board[back_row as usize][1].is_none()
-                    && !is_square_attacked(&state.board, Position::new(back_row as u8, 3), side.opponent())
-                    && !is_square_attacked(&state.board, Position::new(back_row as u8, 2), side.opponent())
+                    && !is_square_attacked(
+                        &state.board,
+                        Position::new(back_row as u8, 3),
+                        side.opponent(),
+                    )
+                    && !is_square_attacked(
+                        &state.board,
+                        Position::new(back_row as u8, 2),
+                        side.opponent(),
+                    )
                 {
                     out.push(ChessMove {
                         from,
@@ -556,8 +669,17 @@ fn pseudo_moves_for_piece(
 }
 
 fn push_promotions(from: Position, to: Position, out: &mut Vec<ChessMove>) {
-    for kind in [PieceKind::Queen, PieceKind::Rook, PieceKind::Bishop, PieceKind::Knight] {
-        out.push(ChessMove { from, to, promotion: Some(kind) });
+    for kind in [
+        PieceKind::Queen,
+        PieceKind::Rook,
+        PieceKind::Bishop,
+        PieceKind::Knight,
+    ] {
+        out.push(ChessMove {
+            from,
+            to,
+            promotion: Some(kind),
+        });
     }
 }
 
@@ -674,7 +796,7 @@ fn validate_move_inner(state: &ChessState, side: Side, mv: &ChessMove) -> Result
         match mv.promotion {
             None => return Err("must specify promotion piece".to_string()),
             Some(PieceKind::King) | Some(PieceKind::Pawn) => {
-                return Err("invalid promotion piece".to_string())
+                return Err("invalid promotion piece".to_string());
             }
             Some(_) => {}
         }
@@ -685,7 +807,10 @@ fn validate_move_inner(state: &ChessState, side: Side, mv: &ChessMove) -> Result
     // Check the move is in pseudo-legal list
     let mut pseudo = Vec::new();
     pseudo_moves_for_piece(state, mv.from, piece, &mut pseudo);
-    if !pseudo.iter().any(|m| m.from == mv.from && m.to == mv.to && m.promotion == mv.promotion) {
+    if !pseudo
+        .iter()
+        .any(|m| m.from == mv.from && m.to == mv.to && m.promotion == mv.promotion)
+    {
         return Err("illegal move for this piece".to_string());
     }
 
@@ -707,13 +832,15 @@ fn apply_move_inner(state: &mut ChessState, side: Side, mv: &ChessMove) {
     let is_capture = state.board[mv.to.row as usize][mv.to.col as usize].is_some();
 
     // En passant capture: detect before clearing source
-    let ep_capture_pos: Option<Position> =
-        if is_pawn_move && let Some(ep) = state.en_passant_target && mv.to == ep {
-            // The captured pawn is on the same row as the moving pawn, en passant column
-            Some(Position::new(mv.from.row, mv.to.col))
-        } else {
-            None
-        };
+    let ep_capture_pos: Option<Position> = if is_pawn_move
+        && let Some(ep) = state.en_passant_target
+        && mv.to == ep
+    {
+        // The captured pawn is on the same row as the moving pawn, en passant column
+        Some(Position::new(mv.from.row, mv.to.col))
+    } else {
+        None
+    };
 
     // Halfmove clock
     if is_pawn_move || is_capture || ep_capture_pos.is_some() {
@@ -723,7 +850,8 @@ fn apply_move_inner(state: &mut ChessState, side: Side, mv: &ChessMove) {
     }
 
     // Detect castling (king moves 2 squares horizontally)
-    let is_castling = piece.kind == PieceKind::King && (mv.to.col as i32 - mv.from.col as i32).abs() == 2;
+    let is_castling =
+        piece.kind == PieceKind::King && (mv.to.col as i32 - mv.from.col as i32).abs() == 2;
 
     // Move piece
     state.board[mv.from.row as usize][mv.from.col as usize] = None;
@@ -747,7 +875,10 @@ fn apply_move_inner(state: &mut ChessState, side: Side, mv: &ChessMove) {
 
     // Place piece (or promoted piece) on destination
     let placed_piece = if let Some(promo_kind) = mv.promotion {
-        Piece { kind: promo_kind, side }
+        Piece {
+            kind: promo_kind,
+            side,
+        }
     } else {
         piece
     };
@@ -852,9 +983,8 @@ fn is_insufficient_material(board: &[[Option<Piece>; 8]; 8]) -> bool {
         return true;
     }
 
-    let is_lone_king = |pieces: &Vec<(PieceKind, u8, u8)>| {
-        pieces.len() == 1 && pieces[0].0 == PieceKind::King
-    };
+    let is_lone_king =
+        |pieces: &Vec<(PieceKind, u8, u8)>| pieces.len() == 1 && pieces[0].0 == PieceKind::King;
     let is_kb_or_kn = |pieces: &Vec<(PieceKind, u8, u8)>| {
         if pieces.len() != 2 {
             return false;
@@ -917,10 +1047,18 @@ fn position_hash(
         }
     }
     h ^= current_turn as u64 * 0x9e37_79b9_7f4a_7c15;
-    if castle_rights.white_kingside  { h ^= 0xbf58_476d_1ce4_e5b9; }
-    if castle_rights.white_queenside { h ^= 0x94d0_49bb_1331_11eb; }
-    if castle_rights.black_kingside  { h ^= 0x0123_4567_89ab_cdef; }
-    if castle_rights.black_queenside { h ^= 0xfedc_ba98_7654_3210; }
+    if castle_rights.white_kingside {
+        h ^= 0xbf58_476d_1ce4_e5b9;
+    }
+    if castle_rights.white_queenside {
+        h ^= 0x94d0_49bb_1331_11eb;
+    }
+    if castle_rights.black_kingside {
+        h ^= 0x0123_4567_89ab_cdef;
+    }
+    if castle_rights.black_queenside {
+        h ^= 0xfedc_ba98_7654_3210;
+    }
     if let Some(ep) = en_passant {
         h ^= splitmix64(ep.col as u64 + 100);
     }
@@ -928,14 +1066,17 @@ fn position_hash(
 }
 
 fn piece_index(p: Piece) -> u8 {
-    let side_offset: u8 = match p.side { Side::White => 0, Side::Black => 6 };
+    let side_offset: u8 = match p.side {
+        Side::White => 0,
+        Side::Black => 6,
+    };
     let kind_offset: u8 = match p.kind {
-        PieceKind::Pawn   => 0,
+        PieceKind::Pawn => 0,
         PieceKind::Knight => 1,
         PieceKind::Bishop => 2,
-        PieceKind::Rook   => 3,
-        PieceKind::Queen  => 4,
-        PieceKind::King   => 5,
+        PieceKind::Rook => 3,
+        PieceKind::Queen => 4,
+        PieceKind::King => 5,
     };
     side_offset + kind_offset
 }
@@ -1026,7 +1167,11 @@ fn chess_alpha_beta(
     if moves.is_empty() {
         let side = side_for_turn(state.current_turn);
         return if in_check(state, side) {
-            if state.current_turn == 0 { -(100_000 + depth as i32) } else { 100_000 + depth as i32 }
+            if state.current_turn == 0 {
+                -(100_000 + depth as i32)
+            } else {
+                100_000 + depth as i32
+            }
         } else {
             0 // stalemate
         };
@@ -1074,12 +1219,12 @@ fn evaluate_chess(state: &ChessState) -> i32 {
 
 fn piece_value(kind: PieceKind) -> i32 {
     match kind {
-        PieceKind::Pawn   => 100,
+        PieceKind::Pawn => 100,
         PieceKind::Knight => 300,
         PieceKind::Bishop => 300,
-        PieceKind::Rook   => 500,
-        PieceKind::Queen  => 900,
-        PieceKind::King   => 100_000,
+        PieceKind::Rook => 500,
+        PieceKind::Queen => 900,
+        PieceKind::King => 100_000,
     }
 }
 
@@ -1148,17 +1293,26 @@ mod tests {
         let p0 = s.players[0];
         // Single step: e2-e3 (row 1 col 4 → row 2 col 4)
         let single = mv(1, 4, 2, 4);
-        assert!(Chess::validate_move(&s, p0, &single).is_ok(), "single step failed");
+        assert!(
+            Chess::validate_move(&s, p0, &single).is_ok(),
+            "single step failed"
+        );
         // Double step: e2-e4
         let double = mv(1, 4, 3, 4);
-        assert!(Chess::validate_move(&s, p0, &double).is_ok(), "double step failed");
+        assert!(
+            Chess::validate_move(&s, p0, &double).is_ok(),
+            "double step failed"
+        );
     }
 
     #[test]
     fn pawn_blocked_cannot_move() {
         let mut s = new_game();
         // Place a black pawn in front of white e-pawn
-        s.board[2][4] = Some(Piece { kind: PieceKind::Pawn, side: Side::Black });
+        s.board[2][4] = Some(Piece {
+            kind: PieceKind::Pawn,
+            side: Side::Black,
+        });
         let p0 = s.players[0];
         assert!(Chess::validate_move(&s, p0, &mv(1, 4, 2, 4)).is_err());
         assert!(Chess::validate_move(&s, p0, &mv(1, 4, 3, 4)).is_err());
@@ -1169,21 +1323,36 @@ mod tests {
         let mut s = new_game();
         // Move white e-pawn to e4 (3,4), put black piece on d5 (4,3)
         s.board[3][4] = s.board[1][4].take();
-        s.board[4][3] = Some(Piece { kind: PieceKind::Pawn, side: Side::Black });
+        s.board[4][3] = Some(Piece {
+            kind: PieceKind::Pawn,
+            side: Side::Black,
+        });
         let p0 = s.players[0];
         // White captures diagonally: (3,4) → (4,3)
         assert!(Chess::validate_move(&s, p0, &mv(3, 4, 4, 3)).is_ok());
         // Cannot capture own piece
-        s.board[4][5] = Some(Piece { kind: PieceKind::Pawn, side: Side::White });
+        s.board[4][5] = Some(Piece {
+            kind: PieceKind::Pawn,
+            side: Side::White,
+        });
         assert!(Chess::validate_move(&s, p0, &mv(3, 4, 4, 5)).is_err());
     }
 
     #[test]
     fn knight_moves_from_corner() {
         let mut s = empty_state();
-        s.board[0][0] = Some(Piece { kind: PieceKind::Knight, side: Side::White });
-        s.board[0][4] = Some(Piece { kind: PieceKind::King, side: Side::White });
-        s.board[7][4] = Some(Piece { kind: PieceKind::King, side: Side::Black });
+        s.board[0][0] = Some(Piece {
+            kind: PieceKind::Knight,
+            side: Side::White,
+        });
+        s.board[0][4] = Some(Piece {
+            kind: PieceKind::King,
+            side: Side::White,
+        });
+        s.board[7][4] = Some(Piece {
+            kind: PieceKind::King,
+            side: Side::Black,
+        });
         let p0 = s.players[0];
         // From a1 (0,0), knight can go to (1,2) or (2,1)
         assert!(Chess::validate_move(&s, p0, &mv(0, 0, 1, 2)).is_ok());
@@ -1204,9 +1373,18 @@ mod tests {
     fn cannot_move_into_check() {
         let mut s = empty_state();
         // White king at e1 (0,4). Black queen at (1,3) attacks (0,3) and (0,4).
-        s.board[0][4] = Some(Piece { kind: PieceKind::King, side: Side::White });
-        s.board[7][4] = Some(Piece { kind: PieceKind::King, side: Side::Black });
-        s.board[1][3] = Some(Piece { kind: PieceKind::Queen, side: Side::Black });
+        s.board[0][4] = Some(Piece {
+            kind: PieceKind::King,
+            side: Side::White,
+        });
+        s.board[7][4] = Some(Piece {
+            kind: PieceKind::King,
+            side: Side::Black,
+        });
+        s.board[1][3] = Some(Piece {
+            kind: PieceKind::Queen,
+            side: Side::Black,
+        });
         let p0 = s.players[0];
         // King moving to (0,3) would step into black queen's attack
         assert!(Chess::validate_move(&s, p0, &mv(0, 4, 0, 3)).is_err());
@@ -1221,10 +1399,25 @@ mod tests {
         let p0 = s.players[0];
         // King moves from (0,4) to (0,6) = kingside castle
         let castle = mv(0, 4, 0, 6);
-        assert!(Chess::validate_move(&s, p0, &castle).is_ok(), "kingside castle should be legal");
+        assert!(
+            Chess::validate_move(&s, p0, &castle).is_ok(),
+            "kingside castle should be legal"
+        );
         Chess::apply_move(&mut s, p0, &castle);
-        assert_eq!(s.board[0][6], Some(Piece { kind: PieceKind::King, side: Side::White }));
-        assert_eq!(s.board[0][5], Some(Piece { kind: PieceKind::Rook, side: Side::White }));
+        assert_eq!(
+            s.board[0][6],
+            Some(Piece {
+                kind: PieceKind::King,
+                side: Side::White
+            })
+        );
+        assert_eq!(
+            s.board[0][5],
+            Some(Piece {
+                kind: PieceKind::Rook,
+                side: Side::White
+            })
+        );
         assert!(s.board[0][7].is_none());
     }
 
@@ -1236,20 +1429,38 @@ mod tests {
         s.board[0][6] = None;
         s.board[1][4] = None;
         // Put black rook on e-file attacking white king
-        s.board[3][4] = Some(Piece { kind: PieceKind::Rook, side: Side::Black });
+        s.board[3][4] = Some(Piece {
+            kind: PieceKind::Rook,
+            side: Side::Black,
+        });
         let p0 = s.players[0];
         let castle = mv(0, 4, 0, 6);
-        assert!(Chess::validate_move(&s, p0, &castle).is_err(), "cannot castle while in check");
+        assert!(
+            Chess::validate_move(&s, p0, &castle).is_err(),
+            "cannot castle while in check"
+        );
     }
 
     #[test]
     fn en_passant_capture() {
         let mut s = empty_state();
         // White pawn at (4,4), black pawn about to double-push from (6,3)
-        s.board[4][4] = Some(Piece { kind: PieceKind::Pawn, side: Side::White });
-        s.board[6][3] = Some(Piece { kind: PieceKind::Pawn, side: Side::Black });
-        s.board[0][4] = Some(Piece { kind: PieceKind::King, side: Side::White });
-        s.board[7][4] = Some(Piece { kind: PieceKind::King, side: Side::Black });
+        s.board[4][4] = Some(Piece {
+            kind: PieceKind::Pawn,
+            side: Side::White,
+        });
+        s.board[6][3] = Some(Piece {
+            kind: PieceKind::Pawn,
+            side: Side::Black,
+        });
+        s.board[0][4] = Some(Piece {
+            kind: PieceKind::King,
+            side: Side::White,
+        });
+        s.board[7][4] = Some(Piece {
+            kind: PieceKind::King,
+            side: Side::Black,
+        });
         s.current_turn = 1; // Black's turn
 
         let p1 = s.players[1];
@@ -1264,21 +1475,42 @@ mod tests {
         assert!(Chess::validate_move(&s, p0, &ep_mv).is_ok());
         Chess::apply_move(&mut s, p0, &ep_mv);
         // White pawn on (5,3), black pawn at (4,3) removed
-        assert_eq!(s.board[5][3], Some(Piece { kind: PieceKind::Pawn, side: Side::White }));
+        assert_eq!(
+            s.board[5][3],
+            Some(Piece {
+                kind: PieceKind::Pawn,
+                side: Side::White
+            })
+        );
         assert!(s.board[4][3].is_none());
     }
 
     #[test]
     fn pawn_promotion_to_queen() {
         let mut s = empty_state();
-        s.board[6][0] = Some(Piece { kind: PieceKind::Pawn, side: Side::White });
-        s.board[0][4] = Some(Piece { kind: PieceKind::King, side: Side::White });
-        s.board[7][4] = Some(Piece { kind: PieceKind::King, side: Side::Black });
+        s.board[6][0] = Some(Piece {
+            kind: PieceKind::Pawn,
+            side: Side::White,
+        });
+        s.board[0][4] = Some(Piece {
+            kind: PieceKind::King,
+            side: Side::White,
+        });
+        s.board[7][4] = Some(Piece {
+            kind: PieceKind::King,
+            side: Side::Black,
+        });
         let p0 = s.players[0];
         let promo = mv_promo(6, 0, 7, 0, PieceKind::Queen);
         assert!(Chess::validate_move(&s, p0, &promo).is_ok());
         Chess::apply_move(&mut s, p0, &promo);
-        assert_eq!(s.board[7][0], Some(Piece { kind: PieceKind::Queen, side: Side::White }));
+        assert_eq!(
+            s.board[7][0],
+            Some(Piece {
+                kind: PieceKind::Queen,
+                side: Side::White
+            })
+        );
     }
 
     #[test]
@@ -1297,7 +1529,9 @@ mod tests {
         Chess::apply_move(&mut s, p1, &mv(7, 3, 3, 7));
 
         match Chess::is_terminal(&s) {
-            Some(GameOutcome::Win(winner)) => assert_eq!(winner, p1, "black should win fool's mate"),
+            Some(GameOutcome::Win(winner)) => {
+                assert_eq!(winner, p1, "black should win fool's mate")
+            }
             other => panic!("expected checkmate (black wins), got {other:?}"),
         }
     }
@@ -1307,14 +1541,29 @@ mod tests {
         // White king on a1 (0,0), black king on c2 (1,2), black queen on b3 (2,1)
         // White's turn; white king has no legal moves but is not in check.
         let mut s = empty_state();
-        s.board[0][0] = Some(Piece { kind: PieceKind::King, side: Side::White });
-        s.board[1][2] = Some(Piece { kind: PieceKind::King, side: Side::Black });
-        s.board[2][1] = Some(Piece { kind: PieceKind::Queen, side: Side::Black });
+        s.board[0][0] = Some(Piece {
+            kind: PieceKind::King,
+            side: Side::White,
+        });
+        s.board[1][2] = Some(Piece {
+            kind: PieceKind::King,
+            side: Side::Black,
+        });
+        s.board[2][1] = Some(Piece {
+            kind: PieceKind::Queen,
+            side: Side::Black,
+        });
         s.current_turn = 0;
 
-        assert!(!in_check(&s, Side::White), "white should not be in check in stalemate");
+        assert!(
+            !in_check(&s, Side::White),
+            "white should not be in check in stalemate"
+        );
         let moves = legal_moves(&s);
-        assert!(moves.is_empty(), "white should have no legal moves: {moves:?}");
+        assert!(
+            moves.is_empty(),
+            "white should have no legal moves: {moves:?}"
+        );
 
         match Chess::is_terminal(&s) {
             Some(GameOutcome::Draw) => {}
@@ -1346,9 +1595,18 @@ mod tests {
         // Even though the rook can pseudo-capture the king on the rank,
         // legal_moves and validate_move must reject it.
         let mut s = empty_state();
-        s.board[0][0] = Some(Piece { kind: PieceKind::Rook, side: Side::White });
-        s.board[0][4] = Some(Piece { kind: PieceKind::King, side: Side::White });
-        s.board[0][7] = Some(Piece { kind: PieceKind::King, side: Side::Black });
+        s.board[0][0] = Some(Piece {
+            kind: PieceKind::Rook,
+            side: Side::White,
+        });
+        s.board[0][4] = Some(Piece {
+            kind: PieceKind::King,
+            side: Side::White,
+        });
+        s.board[0][7] = Some(Piece {
+            kind: PieceKind::King,
+            side: Side::Black,
+        });
         s.current_turn = 0;
 
         let p0 = s.players[0];

@@ -229,4 +229,3 @@ fn render_board(frame: &mut Frame, state: &Connect4State, cursor_col: u8, app: &
         }
     }
 }
-
