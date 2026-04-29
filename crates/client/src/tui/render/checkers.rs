@@ -1,4 +1,4 @@
-use gc_shared::game::checkers::{BOARD_SIZE, CheckersState, Position, Side, Square};
+use gc_shared::game::checkers::{self, BOARD_SIZE, CheckersState, Position, Side, Square};
 use gc_shared::types::GameOutcome;
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -152,6 +152,25 @@ fn render_board(frame: &mut Frame, state: &CheckersState, app: &App, area: Rect)
         .copied()
         .collect();
 
+    // Legal next-step landings for the currently selected piece / chain prefix.
+    // While a piece is selected, every move whose path starts with the current
+    // partial_path is a candidate; the next position in that path is a valid target.
+    let legal_targets: Vec<Position> = if origin.is_some() {
+        let prefix = &app.checkers_input.partial_path;
+        checkers::legal_moves(state)
+            .into_iter()
+            .filter_map(|mv| {
+                if mv.path.len() > prefix.len() && mv.path.starts_with(prefix) {
+                    Some(mv.path[prefix.len()])
+                } else {
+                    None
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     for board_row in 0..BOARD_SIZE {
         let row_area = rows[board_row];
         let col_constraints: Vec<Constraint> = (0..BOARD_SIZE)
@@ -175,25 +194,34 @@ fn render_board(frame: &mut Frame, state: &CheckersState, app: &App, area: Rect)
             let is_mid = mid_path
                 .iter()
                 .any(|p| p.row as usize == board_row && p.col as usize == board_col);
+            let is_legal_target = legal_targets
+                .iter()
+                .any(|p| p.row as usize == board_row && p.col as usize == board_col);
 
-            let bg = if !is_dark {
-                Color::Gray
-            } else if is_origin {
-                Color::Yellow
-            } else if is_mid {
-                Color::Green
+            // Color scheme mirrors the chess renderer for a consistent look.
+            // Selection / target highlights take priority over the base square color.
+            let bg = if is_origin || is_mid {
+                Color::Rgb(170, 162, 58) // muted gold — selected piece / committed chain landings
+            } else if is_cursor && is_legal_target {
+                Color::Rgb(102, 190, 150) // cyan/green blend
             } else if is_cursor {
-                Color::Cyan
+                Color::Rgb(92, 179, 204) // muted cyan
+            } else if is_legal_target {
+                Color::Rgb(130, 151, 105) // muted green — valid next step
+            } else if is_dark {
+                Color::Rgb(181, 136, 99) // chess.com dark
             } else {
-                Color::DarkGray
+                Color::Rgb(240, 217, 181) // chess.com light
             };
 
+            // Use unicode draughts glyphs and white/black piece colors so the
+            // two sides are clearly distinguishable on the new tile palette.
             let (glyph, fg) = match square {
                 Square::Empty => (' ', Color::White),
-                Square::Man(Side::Black) => ('b', Color::Black),
-                Square::King(Side::Black) => ('B', Color::Black),
-                Square::Man(Side::Red) => ('r', Color::Red),
-                Square::King(Side::Red) => ('R', Color::Red),
+                Square::Man(Side::Black) => ('\u{26C2}', Color::Black), // ⛂
+                Square::King(Side::Black) => ('\u{26C3}', Color::Black), // ⛃
+                Square::Man(Side::Red) => ('\u{26C0}', Color::White),   // ⛀ (rendered white)
+                Square::King(Side::Red) => ('\u{26C1}', Color::White),  // ⛁
             };
 
             let style = Style::default().bg(bg).fg(fg).add_modifier(Modifier::BOLD);
