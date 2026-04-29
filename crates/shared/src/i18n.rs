@@ -161,4 +161,16 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn all_french_keys_exist_in_english() {
+        let en = Translator::new(Language::English);
+        let fr = Translator::new(Language::French);
+        for key in fr.translations.keys() {
+            assert!(
+                en.translations.contains_key(key),
+                "English translation missing key: {key}"
+            );
+        }
+    }
 }

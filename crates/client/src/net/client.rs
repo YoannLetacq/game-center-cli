@@ -41,6 +41,7 @@ pub enum NetCommand {
     RematchResponse {
         accept: bool,
     },
+    CancelRematch,
     Disconnect,
 }
 
@@ -60,6 +61,12 @@ pub enum NetEvent {
     GameStateUpdate {
         state_data: Vec<u8>,
     },
+    /// Realtime delta (Snake, Pacman) — incremental diff since previous tick.
+    GameDelta {
+        #[allow(dead_code)] // Tick number kept for future out-of-order logging/metrics.
+        tick: u64,
+        delta_data: Vec<u8>,
+    },
     GameOver {
         outcome: gc_shared::types::GameOutcome,
     },
@@ -67,10 +74,20 @@ pub enum NetEvent {
     Disconnected,
     /// Opponent has sent a rematch request — show accept/decline modal.
     RematchRequested,
-    /// Rematch accepted — a new GameStateUpdate follows.
+    /// Rematch accepted. For turn-based games a fresh `GameStateUpdate` follows;
+    /// for realtime games (Snake) the initial snapshot is emitted by the server
+    /// *before* this event lands in the queue.
     RematchAccepted,
     /// Rematch declined — both players return to lobby.
     RematchDeclined,
+    /// Opponent canceled their pending rematch request — clear the local
+    /// "Y/N accept" overlay and return to the game-over screen.
+    RematchCanceled,
+    /// Authoritative room game type from server.
+    RoomGameType {
+        room_id: gc_shared::types::RoomId,
+        game_type: gc_shared::types::GameType,
+    },
     #[allow(dead_code)]
     ServerMessage(ServerMsg),
 }
@@ -251,6 +268,11 @@ async fn handle_command(
                 let _ = c.send(ClientMsg::RematchResponse { accept }).await;
             }
         }
+        NetCommand::CancelRematch => {
+            if let Some(c) = conn {
+                let _ = c.send(ClientMsg::CancelRematch).await;
+            }
+        }
         NetCommand::Disconnect => {
             if let Some(c) = conn {
                 c.close().await;
@@ -330,12 +352,17 @@ fn dispatch_server_msg(msg: ServerMsg, event_tx: &std_mpsc::Sender<NetEvent>) {
         ServerMsg::PlayerJoined(info) => NetEvent::PlayerJoined(info),
         ServerMsg::PlayerLeft(id) => NetEvent::PlayerLeft(id),
         ServerMsg::GameStateUpdate { state_data, .. } => NetEvent::GameStateUpdate { state_data },
+        ServerMsg::GameDelta { tick, delta_data } => NetEvent::GameDelta { tick, delta_data },
         ServerMsg::GameOver { outcome } => NetEvent::GameOver { outcome },
         ServerMsg::Error { message, .. } => NetEvent::Error(message),
         ServerMsg::AuthFail { reason } => NetEvent::Error(reason),
         ServerMsg::RematchRequested => NetEvent::RematchRequested,
         ServerMsg::RematchAccepted => NetEvent::RematchAccepted,
         ServerMsg::RematchDeclined => NetEvent::RematchDeclined,
+        ServerMsg::RematchCanceled => NetEvent::RematchCanceled,
+        ServerMsg::RoomGameType { room_id, game_type } => {
+            NetEvent::RoomGameType { room_id, game_type }
+        }
         other => NetEvent::ServerMessage(other),
     };
     let _ = event_tx.send(event);

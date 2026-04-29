@@ -1,3 +1,5 @@
+use gc_shared::game::checkers::{Checkers, CheckersState};
+use gc_shared::game::chess::{Chess, ChessState};
 use gc_shared::game::connect4::{Connect4, Connect4State};
 use gc_shared::game::tictactoe::{TicTacToe, TicTacToeState};
 use gc_shared::game::traits::GameEngine;
@@ -18,12 +20,17 @@ pub struct TurnBasedGame {
 pub enum GameState {
     TicTacToe(TicTacToeState),
     Connect4(Connect4State),
+    Checkers(CheckersState),
+    Chess(ChessState),
 }
 
 impl TurnBasedGame {
     /// Check if a game type is currently implemented.
     pub fn is_supported(game_type: GameType) -> bool {
-        matches!(game_type, GameType::TicTacToe | GameType::Connect4)
+        matches!(
+            game_type,
+            GameType::TicTacToe | GameType::Connect4 | GameType::Checkers | GameType::Chess
+        )
     }
 
     /// Create a new game for the given type and players.
@@ -33,6 +40,8 @@ impl TurnBasedGame {
                 GameState::TicTacToe(TicTacToe::initial_state(players, settings))
             }
             GameType::Connect4 => GameState::Connect4(Connect4::initial_state(players, settings)),
+            GameType::Checkers => GameState::Checkers(Checkers::initial_state(players, settings)),
+            GameType::Chess => GameState::Chess(Chess::initial_state(players, settings)),
             _ => return None,
         };
 
@@ -51,6 +60,15 @@ impl TurnBasedGame {
         player: PlayerId,
         action_data: &[u8],
     ) -> (ServerMsg, Vec<(PlayerId, ServerMsg)>) {
+        if self.finished {
+            return (
+                ServerMsg::Error {
+                    code: 409,
+                    message: "game already finished".to_string(),
+                },
+                Vec::new(),
+            );
+        }
         // Decode, validate, apply — dispatched by game type
         let state_bytes = match self.state {
             GameState::TicTacToe(ref mut state) => {
@@ -58,6 +76,12 @@ impl TurnBasedGame {
             }
             GameState::Connect4(ref mut state) => {
                 apply_typed_action::<Connect4>(state, player, action_data)
+            }
+            GameState::Checkers(ref mut state) => {
+                apply_typed_action::<Checkers>(state, player, action_data)
+            }
+            GameState::Chess(ref mut state) => {
+                apply_typed_action::<Chess>(state, player, action_data)
             }
         };
 
@@ -84,6 +108,8 @@ impl TurnBasedGame {
         let outcome = match &self.state {
             GameState::TicTacToe(state) => TicTacToe::is_terminal(state),
             GameState::Connect4(state) => Connect4::is_terminal(state),
+            GameState::Checkers(state) => Checkers::is_terminal(state),
+            GameState::Chess(state) => Chess::is_terminal(state),
         };
 
         if let Some(outcome) = outcome {
@@ -108,6 +134,8 @@ impl TurnBasedGame {
         match &self.state {
             GameState::TicTacToe(state) => state.move_count as u64,
             GameState::Connect4(state) => state.move_count as u64,
+            GameState::Checkers(state) => state.move_count as u64,
+            GameState::Chess(state) => state.move_count as u64,
         }
     }
 
@@ -117,14 +145,42 @@ impl TurnBasedGame {
         match &self.state {
             GameState::TicTacToe(state) => Some(TicTacToe::current_player(state)),
             GameState::Connect4(state) => Some(Connect4::current_player(state)),
+            GameState::Checkers(state) => Some(Checkers::current_player(state)),
+            GameState::Chess(state) => Some(Chess::current_player(state)),
         }
     }
 
     /// Get the serialized game state.
     pub fn encode_state(&self) -> Vec<u8> {
         match &self.state {
-            GameState::TicTacToe(state) => codec::encode(state).unwrap_or_default(),
-            GameState::Connect4(state) => codec::encode(state).unwrap_or_default(),
+            GameState::TicTacToe(state) => match codec::encode(state) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!("failed to encode TicTacToe state: {}", e);
+                    Vec::new()
+                }
+            },
+            GameState::Connect4(state) => match codec::encode(state) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!("failed to encode Connect4 state: {}", e);
+                    Vec::new()
+                }
+            },
+            GameState::Checkers(state) => match codec::encode(state) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!("failed to encode Checkers state: {}", e);
+                    Vec::new()
+                }
+            },
+            GameState::Chess(state) => match codec::encode(state) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!("failed to encode Chess state: {}", e);
+                    Vec::new()
+                }
+            },
         }
     }
 }
@@ -151,7 +207,13 @@ where
 
     G::apply_move(state, player, &mv);
 
-    Ok(codec::encode(state).unwrap_or_default())
+    codec::encode(state).map_err(|e| {
+        tracing::error!("failed to encode game state after move: {}", e);
+        ServerMsg::Error {
+            code: 500,
+            message: "failed to encode game state".to_string(),
+        }
+    })
 }
 
 #[cfg(test)]

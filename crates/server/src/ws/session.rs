@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::net::SocketAddr;
 use std::time::Instant;
 
 use gc_shared::protocol::messages::ServerMsg;
@@ -12,6 +13,8 @@ pub struct Session {
     pub username: Option<String>,
     pub authenticated: bool,
     pub seq: u64,
+    /// Last client-supplied seq observed on this session. Rejects replays/reordering.
+    last_client_seq: u64,
     /// Ring buffer of recent server messages for reconnection replay.
     recent_messages: VecDeque<(u64, ServerMsg)>,
     /// When the session was last active.
@@ -20,21 +23,25 @@ pub struct Session {
     max_buffer: usize,
     /// The room this player is currently in.
     pub current_room: Option<gc_shared::types::RoomId>,
+    /// Remote address of the TCP connection — used for rate limiting.
+    pub peer_addr: SocketAddr,
 }
 
 #[allow(dead_code)]
 impl Session {
-    pub fn new() -> Self {
+    pub fn new(peer_addr: SocketAddr) -> Self {
         Self {
             session_id: SessionId::new(),
             player_id: None,
             username: None,
             authenticated: false,
             seq: 0,
+            last_client_seq: 0,
             recent_messages: VecDeque::with_capacity(100),
             last_active: Instant::now(),
             max_buffer: 100,
             current_room: None,
+            peer_addr,
         }
     }
 
@@ -62,6 +69,16 @@ impl Session {
         self.seq
     }
 
+    /// Accept an inbound client seq if it is strictly greater than the last observed.
+    /// Rejects replays and out-of-order messages. Returns true if accepted.
+    pub fn observe_client_seq(&mut self, seq: u64) -> bool {
+        if seq <= self.last_client_seq {
+            return false;
+        }
+        self.last_client_seq = seq;
+        true
+    }
+
     /// Mark session as active.
     pub fn touch(&mut self) {
         self.last_active = Instant::now();
@@ -78,7 +95,8 @@ impl Session {
 
 impl Default for Session {
     fn default() -> Self {
-        Self::new()
+        use std::net::{IpAddr, Ipv4Addr};
+        Self::new(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
     }
 }
 
@@ -88,7 +106,7 @@ mod tests {
 
     #[test]
     fn session_message_buffer() {
-        let mut session = Session::new();
+        let mut session = Session::new("127.0.0.1:0".parse().unwrap());
         for i in 0..5u64 {
             let seq = session.next_seq();
             session.record_message(seq, ServerMsg::Pong);
@@ -101,7 +119,7 @@ mod tests {
 
     #[test]
     fn session_buffer_overflow() {
-        let mut session = Session::new();
+        let mut session = Session::new("127.0.0.1:0".parse().unwrap());
         session.max_buffer = 3;
 
         for _ in 0..5 {
@@ -116,8 +134,21 @@ mod tests {
     }
 
     #[test]
+    fn observe_client_seq_rejects_replays_and_reorders() {
+        let mut session = Session::new("127.0.0.1:0".parse().unwrap());
+        assert!(session.observe_client_seq(1));
+        assert!(session.observe_client_seq(2));
+        // Replay
+        assert!(!session.observe_client_seq(2));
+        // Out-of-order
+        assert!(!session.observe_client_seq(1));
+        // Continues monotonically
+        assert!(session.observe_client_seq(5));
+    }
+
+    #[test]
     fn session_authentication() {
-        let mut session = Session::new();
+        let mut session = Session::new("127.0.0.1:0".parse().unwrap());
         assert!(!session.authenticated);
 
         let pid = PlayerId::new();

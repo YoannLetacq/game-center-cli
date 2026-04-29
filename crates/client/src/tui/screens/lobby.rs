@@ -115,6 +115,27 @@ pub fn render(frame: &mut Frame, app: &App) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw(": Connect4 | "),
+            Span::styled(
+                "K",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(": Checkers | "),
+            Span::styled(
+                "H",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(": Chess | "),
+            Span::styled(
+                "S",
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(": Snake | "),
             Span::styled("Esc", Style::default().fg(Color::Yellow)),
             Span::raw(": Cancel"),
         ]))

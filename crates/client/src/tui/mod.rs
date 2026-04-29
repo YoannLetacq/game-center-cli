@@ -1,3 +1,9 @@
+// The input handlers below use the `match { K => if cond { … } }` shape
+// throughout. Clippy 1.95+ wants those rewritten as match guards
+// (`K if cond => …`), but expressing every cursor-bound check that way
+// makes the dispatch tables noisier without a real readability win.
+#![allow(clippy::collapsible_match)]
+
 pub mod app;
 pub mod event;
 pub mod render;
@@ -34,14 +40,41 @@ pub fn run(mut app: App) -> io::Result<()> {
     // Main loop
     while app.running {
         // Draw
-        terminal.draw(|frame| match app.screen {
-            Screen::Login => screens::login::render(frame, &app),
-            Screen::Lobby => screens::lobby::render(frame, &app),
-            Screen::Room => screens::room::render(frame, &app),
-            Screen::InGame => match &app.game_state {
-                Some(app::ClientGameState::Connect4(_)) => render::connect4::render(frame, &app),
-                _ => render::tictactoe::render(frame, &app),
-            },
+        terminal.draw(|frame| {
+            let area = frame.area();
+            // Determine current game type for terminal fit check
+            let game_type = if app.screen == Screen::InGame {
+                Some(app.current_game_type)
+            } else {
+                None
+            };
+            match render::terminal_fit::check_fit_for_game(area, game_type) {
+                render::terminal_fit::TerminalFit::TooSmall => {
+                    render::terminal_fit::render_too_small(frame, area);
+                    return;
+                }
+                render::terminal_fit::TerminalFit::Edge => {
+                    render::terminal_fit::render_edge_icon(frame, area);
+                    return;
+                }
+                render::terminal_fit::TerminalFit::Ok => {}
+            }
+            match app.screen {
+                Screen::Login => screens::login::render(frame, &app),
+                Screen::Lobby => screens::lobby::render(frame, &app),
+                Screen::Room => screens::room::render(frame, &app),
+                Screen::InGame => match &app.game_state {
+                    Some(app::ClientGameState::Connect4(_)) => {
+                        render::connect4::render(frame, &app)
+                    }
+                    Some(app::ClientGameState::Checkers(_)) => {
+                        render::checkers::render(frame, &app)
+                    }
+                    Some(app::ClientGameState::Chess(_)) => render::chess::render(frame, &app),
+                    Some(app::ClientGameState::Snake(_)) => render::snake::render(frame, &app),
+                    _ => render::tictactoe::render(frame, &app),
+                },
+            }
         })?;
 
         // Process network events (non-blocking)
@@ -63,6 +96,10 @@ pub fn run(mut app: App) -> io::Result<()> {
                         }
                     } else {
                         lobby_refresh_counter = 0;
+                    }
+                    // Drive realtime solo games from the existing 50 ms tick.
+                    if app.screen == Screen::InGame {
+                        app.solo_snake_tick();
                     }
                 }
             }
@@ -108,6 +145,13 @@ fn handle_net_event(app: &mut App, event: NetEvent, net: &NetworkClient) {
         NetEvent::GameStateUpdate { state_data } => {
             app.on_game_state(&state_data);
         }
+        NetEvent::GameDelta {
+            tick: _,
+            delta_data,
+        } => {
+            // Only Snake produces deltas today; decoder routes by active state.
+            app.on_snake_delta(&delta_data);
+        }
         NetEvent::GameOver { outcome } => {
             app.on_game_over(outcome);
         }
@@ -126,6 +170,18 @@ fn handle_net_event(app: &mut App, event: NetEvent, net: &NetworkClient) {
         NetEvent::RematchDeclined => {
             app.on_rematch_declined();
             let _ = net.send(NetCommand::ListRooms);
+        }
+        NetEvent::RematchCanceled => {
+            app.on_rematch_canceled();
+        }
+        NetEvent::RoomGameType { room_id, game_type } => {
+            tracing::debug!(
+                ?room_id,
+                ?game_type,
+                "received authoritative room game type"
+            );
+            app.current_game_type = game_type;
+            app.selected_game_type = game_type;
         }
         NetEvent::Error(msg) => {
             // Route error to the right screen
@@ -151,6 +207,13 @@ fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, net: &Netwo
             return;
         }
         match app.screen {
+            Screen::InGame
+                if matches!(&app.game_state, Some(app::ClientGameState::Checkers(_)))
+                    && app.checkers_input.stage != app::CheckersInputStage::Idle =>
+            {
+                app.checkers_cancel_selection();
+                return;
+            }
             Screen::InGame if app.game_mode != GameMode::Online => {
                 app.leave_solo_game();
                 return;
@@ -172,7 +235,7 @@ fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, net: &Netwo
         return;
     }
 
-    if app.screen == Screen::InGame && (code == KeyCode::Char('i') || code == KeyCode::Char('I')) {
+    if app.screen == Screen::InGame && code == KeyCode::Char('?') {
         app.show_help = !app.show_help;
         return;
     }
@@ -204,6 +267,21 @@ fn handle_login_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
             }
             KeyCode::Char('c') | KeyCode::Char('C') => {
                 app.selected_game_type = gc_shared::types::GameType::Connect4;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                app.selected_game_type = gc_shared::types::GameType::Checkers;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
+            KeyCode::Char('h') | KeyCode::Char('H') => {
+                app.selected_game_type = gc_shared::types::GameType::Chess;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                app.selected_game_type = gc_shared::types::GameType::Snake;
                 app.selecting_solo_game = false;
                 app.selecting_difficulty = true;
             }
@@ -297,6 +375,21 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                 app.selecting_solo_game = false;
                 app.selecting_difficulty = true;
             }
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                app.selected_game_type = gc_shared::types::GameType::Checkers;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
+            KeyCode::Char('h') | KeyCode::Char('H') => {
+                app.selected_game_type = gc_shared::types::GameType::Chess;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                app.selected_game_type = gc_shared::types::GameType::Snake;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
             KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
                 app.selecting_solo_game = false;
             }
@@ -322,6 +415,42 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
             }
             KeyCode::Char('c') | KeyCode::Char('C') => {
                 app.selected_game_type = gc_shared::types::GameType::Connect4;
+                app.selecting_multiplayer_game = false;
+
+                let settings = gc_shared::types::GameSettings::default();
+                app.current_game_type = app.selected_game_type;
+                app.current_max_players = settings.max_players;
+                let _ = net.send(NetCommand::CreateRoom {
+                    game_type: app.selected_game_type,
+                    settings,
+                });
+            }
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                app.selected_game_type = gc_shared::types::GameType::Checkers;
+                app.selecting_multiplayer_game = false;
+
+                let settings = gc_shared::types::GameSettings::default();
+                app.current_game_type = app.selected_game_type;
+                app.current_max_players = settings.max_players;
+                let _ = net.send(NetCommand::CreateRoom {
+                    game_type: app.selected_game_type,
+                    settings,
+                });
+            }
+            KeyCode::Char('h') | KeyCode::Char('H') => {
+                app.selected_game_type = gc_shared::types::GameType::Chess;
+                app.selecting_multiplayer_game = false;
+
+                let settings = gc_shared::types::GameSettings::default();
+                app.current_game_type = app.selected_game_type;
+                app.current_max_players = settings.max_players;
+                let _ = net.send(NetCommand::CreateRoom {
+                    game_type: app.selected_game_type,
+                    settings,
+                });
+            }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                app.selected_game_type = gc_shared::types::GameType::Snake;
                 app.selecting_multiplayer_game = false;
 
                 let settings = gc_shared::types::GameSettings::default();
@@ -368,7 +497,10 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
             // Cycle through available game types
             app.selected_game_type = match app.selected_game_type {
                 gc_shared::types::GameType::TicTacToe => gc_shared::types::GameType::Connect4,
-                gc_shared::types::GameType::Connect4 => gc_shared::types::GameType::TicTacToe,
+                gc_shared::types::GameType::Connect4 => gc_shared::types::GameType::Checkers,
+                gc_shared::types::GameType::Checkers => gc_shared::types::GameType::Chess,
+                gc_shared::types::GameType::Chess => gc_shared::types::GameType::Snake,
+                gc_shared::types::GameType::Snake => gc_shared::types::GameType::TicTacToe,
                 _ => gc_shared::types::GameType::TicTacToe,
             };
         }
@@ -428,6 +560,11 @@ fn handle_game_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                     let _ = net.send(NetCommand::RequestRematch);
                 }
             }
+            KeyCode::Char('c') | KeyCode::Char('C') if app.rematch_pending => {
+                app.rematch_pending = false;
+                app.status_message = Some("Rematch request canceled".to_string());
+                let _ = net.send(NetCommand::CancelRematch);
+            }
             _ => {}
         }
         return;
@@ -438,9 +575,190 @@ fn handle_game_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         Some(app::ClientGameState::Connect4(_)) => {
             handle_connect4_key(app, code, net);
         }
+        Some(app::ClientGameState::Checkers(_)) => {
+            handle_checkers_key(app, code, net);
+        }
+        Some(app::ClientGameState::Chess(_)) => {
+            handle_chess_key(app, code, net);
+        }
+        Some(app::ClientGameState::Snake(_)) => {
+            handle_snake_key(app, code, net);
+        }
         _ => {
             handle_tictactoe_key(app, code, net);
         }
+    }
+}
+
+fn handle_chess_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
+    use gc_shared::game::chess::{self as chess_engine, Chess, ChessMove, PieceKind, Position};
+    use gc_shared::game::traits::GameEngine;
+
+    // Pending promotion: only Q/R/B/N or Esc/Backspace are meaningful.
+    if let Some((from, to)) = app.chess_input.pending_promotion {
+        match code {
+            KeyCode::Char('q') | KeyCode::Char('Q') => {
+                submit_chess_promotion(app, net, from, to, PieceKind::Queen);
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                submit_chess_promotion(app, net, from, to, PieceKind::Rook);
+            }
+            KeyCode::Char('b') | KeyCode::Char('B') => {
+                submit_chess_promotion(app, net, from, to, PieceKind::Bishop);
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                submit_chess_promotion(app, net, from, to, PieceKind::Knight);
+            }
+            KeyCode::Backspace | KeyCode::Esc => {
+                app.chess_input.pending_promotion = None;
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    match code {
+        KeyCode::Up => {
+            if app.chess_input.cursor_row < 7 {
+                app.chess_input.cursor_row += 1;
+            }
+        }
+        KeyCode::Down => {
+            if app.chess_input.cursor_row > 0 {
+                app.chess_input.cursor_row -= 1;
+            }
+        }
+        KeyCode::Left => {
+            if app.chess_input.cursor_col > 0 {
+                app.chess_input.cursor_col -= 1;
+            }
+        }
+        KeyCode::Right => {
+            if app.chess_input.cursor_col < 7 {
+                app.chess_input.cursor_col += 1;
+            }
+        }
+        KeyCode::Backspace => {
+            app.chess_input.selected_from = None;
+            app.status_message = None;
+        }
+        KeyCode::Enter => {
+            if !app.is_our_turn() {
+                return;
+            }
+            let cursor = Position::new(app.chess_input.cursor_row, app.chess_input.cursor_col);
+            let Some(app::ClientGameState::Chess(state)) = app.game_state.as_ref() else {
+                return;
+            };
+            let player_id = match app.my_player_id {
+                Some(id) => id,
+                None => return,
+            };
+            let our_side = if Chess::current_player(state) == player_id {
+                if state.current_turn == 0 {
+                    gc_shared::game::chess::Side::White
+                } else {
+                    gc_shared::game::chess::Side::Black
+                }
+            } else {
+                return;
+            };
+
+            match app.chess_input.selected_from {
+                None => {
+                    // Pick a piece of our side.
+                    if let Some(piece) = state.board[cursor.row as usize][cursor.col as usize]
+                        && piece.side == our_side
+                    {
+                        app.chess_input.selected_from = Some(cursor);
+                        app.status_message = None;
+                    } else {
+                        app.status_error = Some("Select one of your own pieces".to_string());
+                    }
+                }
+                Some(from) => {
+                    if from == cursor {
+                        // Deselect.
+                        app.chess_input.selected_from = None;
+                        return;
+                    }
+                    // Check if any legal move from->cursor exists, and whether it
+                    // requires promotion.
+                    let legals: Vec<ChessMove> = chess_engine::legal_moves(state)
+                        .into_iter()
+                        .filter(|m| m.from == from && m.to == cursor)
+                        .collect();
+                    if legals.is_empty() {
+                        app.status_error = Some("Illegal move".to_string());
+                        return;
+                    }
+                    if legals.iter().any(|m| m.promotion.is_some()) {
+                        // Defer until user picks the promotion piece.
+                        app.chess_input.pending_promotion = Some((from, cursor));
+                    } else {
+                        let mv = legals[0];
+                        finalize_chess_move(app, net, mv);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn submit_chess_promotion(
+    app: &mut App,
+    net: &NetworkClient,
+    from: gc_shared::game::chess::Position,
+    to: gc_shared::game::chess::Position,
+    promotion: gc_shared::game::chess::PieceKind,
+) {
+    let mv = gc_shared::game::chess::ChessMove {
+        from,
+        to,
+        promotion: Some(promotion),
+    };
+    app.chess_input.pending_promotion = None;
+    finalize_chess_move(app, net, mv);
+}
+
+fn finalize_chess_move(app: &mut App, net: &NetworkClient, mv: gc_shared::game::chess::ChessMove) {
+    match app.game_mode {
+        GameMode::Solo { .. } => {
+            if !app.submit_chess_move(mv) {
+                app.status_error = Some("Illegal move".to_string());
+            }
+        }
+        GameMode::Online => {
+            if let Ok(data) = gc_shared::protocol::codec::encode(&mv) {
+                let _ = net.send(NetCommand::GameAction { data });
+                app.chess_input.selected_from = None;
+            }
+        }
+    }
+}
+
+fn handle_checkers_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
+    match code {
+        KeyCode::Up => app.checkers_cursor_step(-1, 0),
+        KeyCode::Down => app.checkers_cursor_step(1, 0),
+        KeyCode::Left => app.checkers_cursor_step(0, -1),
+        KeyCode::Right => app.checkers_cursor_step(0, 1),
+        KeyCode::Backspace | KeyCode::Char('c') | KeyCode::Char('C') => {
+            app.checkers_cancel_selection()
+        }
+        KeyCode::Enter => {
+            if !app.is_our_turn() {
+                return;
+            }
+            if let Some(mv) = app.checkers_confirm()
+                && matches!(app.game_mode, app::GameMode::Online)
+                && let Ok(data) = gc_shared::protocol::codec::encode(&mv)
+            {
+                let _ = net.send(NetCommand::GameAction { data });
+            }
+        }
+        _ => {}
     }
 }
 
@@ -486,6 +804,51 @@ fn handle_tictactoe_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         }
         _ => {}
     }
+}
+
+fn handle_snake_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
+    use gc_shared::game::snake::{Direction as SnakeDir, SnakeInput};
+
+    let dir = match code {
+        KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('W') => Some(SnakeDir::Up),
+        KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('S') => Some(SnakeDir::Down),
+        KeyCode::Left | KeyCode::Char('a') | KeyCode::Char('A') => Some(SnakeDir::Left),
+        KeyCode::Right | KeyCode::Char('d') | KeyCode::Char('D') => Some(SnakeDir::Right),
+        _ => None,
+    };
+    let Some(new_dir) = dir else {
+        return;
+    };
+
+    // Reject 180° reversals client-side — server also re-checks. Surface a
+    // brief status message so the keypress doesn't feel silently swallowed.
+    if let Some(app::ClientGameState::Snake(ref state)) = app.game_state
+        && let Some(me) = app.my_player_id
+        && let Some(my_arena) = state.arenas.iter().find(|a| a.owner == Some(me))
+        && let Some(my_snake) = my_arena.snakes.iter().find(|s| s.player_id == me)
+        && is_opposite(my_snake.direction, new_dir)
+    {
+        app.status_message = Some("Cannot reverse direction".to_string());
+        return;
+    }
+
+    let changed = app.snake_queue_direction(new_dir);
+
+    if matches!(app.game_mode, GameMode::Online) && changed {
+        let input = SnakeInput { direction: new_dir };
+        if let Ok(data) = gc_shared::protocol::codec::encode(&input) {
+            let _ = net.send(NetCommand::GameAction { data });
+            app.snake_last_sent_direction = Some(new_dir);
+        }
+    }
+}
+
+fn is_opposite(a: gc_shared::game::snake::Direction, b: gc_shared::game::snake::Direction) -> bool {
+    use gc_shared::game::snake::Direction as D;
+    matches!(
+        (a, b),
+        (D::Up, D::Down) | (D::Down, D::Up) | (D::Left, D::Right) | (D::Right, D::Left)
+    )
 }
 
 fn handle_connect4_key(app: &mut App, code: KeyCode, net: &NetworkClient) {

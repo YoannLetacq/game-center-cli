@@ -47,6 +47,14 @@ you_lose = "Vous avez perdu !"
 draw = "Égalité !"
 rematch = "Revanche"
 leave = "Quitter la partie"
+snake = "Serpent"
+
+[snake]
+score = "Score : {p0} vs {p1}"
+you_crashed = "Vous êtes mort !"
+game_over = "Partie terminée"
+controls = "Flèches / WASD : bouger  |  Esc : quitter  |  I : aide"
+your_turn = "À vous de jouer"
 
 [game_names]
 tictactoe = "Morpion"
@@ -56,6 +64,16 @@ chess = "Échecs"
 snake = "Serpent"
 blockbreaker = "Casse-briques"
 pacman = "Pacman"
+
+[chess]
+hint_promote = "Promouvoir : D=Dame T=Tour F=Fou C=Cavalier | Esc/Backspace : annuler"
+hint_select_target = "Sélectionner la case cible (Entrée) | Backspace : effacer"
+hint_select_piece = "Sélectionner votre pièce (flèches + Entrée)"
+hint_move_select = "Flèches : déplacer | Entrée : sélectionner/cible | Backspace : effacer | Esc : quitter"
+
+[checkers]
+error_own_piece = "Sélectionnez l'une de vos propres pièces"
+error_illegal_target = "Cible illégale — sélection effacée"
 
 [errors]
 connection_failed = "Échec de la connexion"

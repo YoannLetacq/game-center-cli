@@ -47,6 +47,14 @@ you_lose = "You lose!"
 draw = "Draw!"
 rematch = "Rematch"
 leave = "Leave game"
+snake = "Snake"
+
+[snake]
+score = "Score: {p0} vs {p1}"
+you_crashed = "You crashed!"
+game_over = "Game Over"
+controls = "Arrows / WASD: move  |  Esc: leave  |  I: help"
+your_turn = "Your turn"
 
 [game_names]
 tictactoe = "Tic-Tac-Toe"
@@ -56,6 +64,16 @@ chess = "Chess"
 snake = "Snake"
 blockbreaker = "Block Breaker"
 pacman = "Pacman"
+
+[chess]
+hint_promote = "Promote: Q=Queen R=Rook B=Bishop N=Knight | Esc/Backspace: cancel"
+hint_select_target = "Select target square (Enter) | Backspace: clear"
+hint_select_piece = "Select your piece (arrows + Enter)"
+hint_move_select = "Arrows: move | Enter: select/target | Backspace: clear | Esc: leave"
+
+[checkers]
+error_own_piece = "Select one of your own pieces"
+error_illegal_target = "Illegal target — selection cleared"
 
 [errors]
 connection_failed = "Connection failed"

@@ -29,7 +29,7 @@ impl Database {
     }
 
     fn run_migrations(&self) -> Result<(), rusqlite::Error> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS schema_version (
                 version INTEGER PRIMARY KEY
@@ -63,7 +63,7 @@ impl Database {
         username: &str,
         password_hash: &str,
     ) -> Result<(), rusqlite::Error> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.execute(
             "INSERT INTO users (id, username, password_hash) VALUES (?1, ?2, ?3)",
             rusqlite::params![id, username, password_hash],
@@ -76,7 +76,7 @@ impl Database {
         &self,
         username: &str,
     ) -> Result<Option<(String, String)>, rusqlite::Error> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let mut stmt = conn.prepare("SELECT id, password_hash FROM users WHERE username = ?1")?;
         let mut rows = stmt.query(rusqlite::params![username])?;
 
@@ -89,7 +89,7 @@ impl Database {
 
     /// Check if a username is already taken.
     pub fn username_exists(&self, username: &str) -> Result<bool, rusqlite::Error> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM users WHERE username = ?1",
             rusqlite::params![username],

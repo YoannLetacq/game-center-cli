@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::tui::app::{App, ClientGameState};
 
@@ -80,7 +80,10 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // Footer
     let footer_text = if app.rematch_pending {
-        format!("Waiting for opponent... | Esc: {}", t.get("game.leave"))
+        format!(
+            "Waiting for opponent... | C: cancel | Esc: {}",
+            t.get("game.leave")
+        )
     } else if app.rematch_incoming {
         format!(
             "Y: Accept rematch | N: Decline | Esc: {}",
@@ -104,7 +107,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     frame.render_widget(footer, chunks[3]);
 
     if app.show_help {
-        render_help_modal(frame, app);
+        super::render_help_overlay(frame, app);
     }
 
     if app.rematch_pending || app.rematch_incoming {
@@ -186,35 +189,40 @@ fn render_board(frame: &mut Frame, state: &Connect4State, cursor_col: u8, app: &
             let is_game_over = app.game_over.is_some();
             let cell_area = cols[board_col];
 
-            // 3-line circle rendering per cell
+            // True-circle disc built from half-block glyphs: the spaces around
+            // ▄/▀ stay blue (bg), giving visually rounded top/bottom arcs.
             let lines: Vec<Line> = match cell {
                 Cell::Red => {
                     let s = Style::default().fg(Color::Red).bg(Color::Blue);
                     vec![
-                        Line::from(Span::styled(" ╭───╮ ", s)),
-                        Line::from(Span::styled(" │███│ ", s)),
-                        Line::from(Span::styled(" ╰───╯ ", s)),
+                        Line::from(Span::styled(" ▄███▄ ", s)),
+                        Line::from(Span::styled("███████", s)),
+                        Line::from(Span::styled(" ▀███▀ ", s)),
                     ]
                 }
                 Cell::Yellow => {
                     let s = Style::default().fg(Color::Rgb(255, 140, 0)).bg(Color::Blue);
                     vec![
-                        Line::from(Span::styled(" ╭───╮ ", s)),
-                        Line::from(Span::styled(" │███│ ", s)),
-                        Line::from(Span::styled(" ╰───╯ ", s)),
+                        Line::from(Span::styled(" ▄███▄ ", s)),
+                        Line::from(Span::styled("███████", s)),
+                        Line::from(Span::styled(" ▀███▀ ", s)),
                     ]
                 }
                 Cell::Empty => {
-                    let fg = if is_cursor_col && !is_game_over {
+                    // Empty cells render as a dark disc — reads as a hole in
+                    // the blue board. Cursor column highlights its top arc.
+                    let hole = Color::Black;
+                    let top_fg = if is_cursor_col && !is_game_over {
                         Color::Yellow
                     } else {
-                        Color::White
+                        hole
                     };
-                    let s = Style::default().fg(fg).bg(Color::Blue);
+                    let base = Style::default().fg(hole).bg(Color::Blue);
+                    let top = Style::default().fg(top_fg).bg(Color::Blue);
                     vec![
-                        Line::from(Span::styled(" ╭───╮ ", s)),
-                        Line::from(Span::styled(" │   │ ", s)),
-                        Line::from(Span::styled(" ╰───╯ ", s)),
+                        Line::from(Span::styled(" ▄███▄ ", top)),
+                        Line::from(Span::styled("███████", base)),
+                        Line::from(Span::styled(" ▀███▀ ", base)),
                     ]
                 }
             };
@@ -223,73 +231,4 @@ fn render_board(frame: &mut Frame, state: &Connect4State, cursor_col: u8, app: &
             frame.render_widget(cell_widget, cell_area);
         }
     }
-}
-
-fn render_help_modal(frame: &mut Frame, app: &App) {
-    let area = centered_rect(60, 60, frame.area());
-    frame.render_widget(Clear, area);
-
-    let (title, rules) = match &app.game_state {
-        Some(ClientGameState::Connect4(_)) => (
-            "Connect 4 Rules",
-            vec![
-                "Goal: Connect 4 of your pieces in a row.",
-                "Line can be horizontal, vertical, or diagonal.",
-                "Players take turns dropping one piece from the top",
-                "into one of the seven columns.",
-                "",
-                "Controls:",
-                "- Left/Right: Select column",
-                "- Enter: Drop piece",
-                "- I: Close help",
-                "- Esc: Leave game",
-            ],
-        ),
-        _ => (
-            "Tic-Tac-Toe Rules",
-            vec![
-                "Goal: Connect 3 of your marks in a row.",
-                "Line can be horizontal, vertical, or diagonal.",
-                "",
-                "Controls:",
-                "- Arrow Keys: Move cursor",
-                "- Enter: Place mark",
-                "- I: Close help",
-                "- Esc: Leave game",
-            ],
-        ),
-    };
-
-    let help_text: Vec<Line> = rules.into_iter().map(Line::from).collect();
-
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
-
-    let paragraph = Paragraph::new(help_text)
-        .block(block)
-        .alignment(Alignment::Left);
-
-    frame.render_widget(paragraph, area);
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
 }
