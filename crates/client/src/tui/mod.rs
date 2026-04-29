@@ -1,3 +1,9 @@
+// Key handlers use `KeyCode::X => { if cond { ... } }` patterns. Clippy's
+// `collapsible_match` would prefer match guards, but the `match code { ... }`
+// shape with explicit per-key blocks is intentional and matches every other
+// game handler. Silence the lint at file scope.
+#![allow(clippy::collapsible_match)]
+
 pub mod app;
 pub mod event;
 pub mod render;
@@ -27,7 +33,10 @@ pub fn run(mut app: App) -> io::Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let events = EventHandler::new(50);
+    // 30 ms tick = ~33 Hz, the minimum needed by Block Breaker physics.
+    // Other games (Snake at 100 ms, turn-based) gate on their own elapsed
+    // time so they remain unaffected.
+    let events = EventHandler::new(30);
     let net = NetworkClient::new();
     let mut lobby_refresh_counter: u8 = 0;
 
@@ -58,10 +67,11 @@ pub fn run(mut app: App) -> io::Result<()> {
                     Some(app::ClientGameState::Checkers(_)) => {
                         render::checkers::render(frame, &app)
                     }
-                    Some(app::ClientGameState::Chess(_)) => {
-                        render::chess::render(frame, &app)
-                    }
+                    Some(app::ClientGameState::Chess(_)) => render::chess::render(frame, &app),
                     Some(app::ClientGameState::Snake(_)) => render::snake::render(frame, &app),
+                    Some(app::ClientGameState::BlockBreaker(_)) => {
+                        render::blockbreaker::render(frame, &app)
+                    }
                     _ => render::tictactoe::render(frame, &app),
                 },
             }
@@ -77,21 +87,25 @@ pub fn run(mut app: App) -> io::Result<()> {
             match event {
                 Event::Key(key) => handle_key(&mut app, key.code, key.modifiers, &net),
                 Event::Tick => {
-                    // Auto-refresh lobby room list every ~2 seconds (40 ticks * 50ms)
+                    // Auto-refresh lobby room list every ~2 seconds (67 ticks * 30ms)
                     if app.screen == Screen::Lobby && app.authenticated {
-                        lobby_refresh_counter += 1;
-                        if lobby_refresh_counter >= 40 {
+                        lobby_refresh_counter = lobby_refresh_counter.saturating_add(1);
+                        if lobby_refresh_counter >= 67 {
                             lobby_refresh_counter = 0;
                             let _ = net.send(NetCommand::ListRooms);
                         }
                     } else {
                         lobby_refresh_counter = 0;
                     }
-                    // Drive realtime solo games from the existing 50 ms tick.
-                    if app.screen == Screen::InGame {
-                        app.solo_snake_tick();
-                    }
                 }
+            }
+            // Drive realtime solo games unconditionally on every loop
+            // iteration so heavy key-repeat traffic can't starve physics.
+            // Each tick method gates internally on its own elapsed-ms
+            // threshold, so calling it on key events too is cheap.
+            if app.screen == Screen::InGame {
+                app.solo_snake_tick();
+                app.solo_blockbreaker_tick();
             }
         }
     }
@@ -263,6 +277,11 @@ fn handle_login_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                 app.selecting_solo_game = false;
                 app.selecting_difficulty = true;
             }
+            KeyCode::Char('l') | KeyCode::Char('L') => {
+                app.selected_game_type = gc_shared::types::GameType::BlockBreaker;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
             KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
                 app.selecting_solo_game = false;
             }
@@ -273,13 +292,25 @@ fn handle_login_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
 
     // Sub-state: solo difficulty selection on login screen
     if app.selecting_difficulty {
+        let is_bb = app.selected_game_type == gc_shared::types::GameType::BlockBreaker;
         match code {
             KeyCode::Char('e') | KeyCode::Char('E') => {
                 app.selecting_difficulty = false;
+                if is_bb {
+                    app.bb_difficulty = gc_shared::game::blockbreaker::BBDifficulty::Easy;
+                }
                 app.start_solo_game(gc_shared::types::Difficulty::Easy);
             }
             KeyCode::Char('h') | KeyCode::Char('H') => {
                 app.selecting_difficulty = false;
+                if is_bb {
+                    app.bb_difficulty = gc_shared::game::blockbreaker::BBDifficulty::Hard;
+                }
+                app.start_solo_game(gc_shared::types::Difficulty::Hard);
+            }
+            KeyCode::Char('x') | KeyCode::Char('X') if is_bb => {
+                app.selecting_difficulty = false;
+                app.bb_difficulty = gc_shared::game::blockbreaker::BBDifficulty::Hardcore;
                 app.start_solo_game(gc_shared::types::Difficulty::Hard);
             }
             KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
@@ -368,6 +399,11 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                 app.selecting_solo_game = false;
                 app.selecting_difficulty = true;
             }
+            KeyCode::Char('l') | KeyCode::Char('L') => {
+                app.selected_game_type = gc_shared::types::GameType::BlockBreaker;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
             KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
                 app.selecting_solo_game = false;
             }
@@ -437,13 +473,25 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
 
     // Sub-state: difficulty selection
     if app.selecting_difficulty {
+        let is_bb = app.selected_game_type == gc_shared::types::GameType::BlockBreaker;
         match code {
             KeyCode::Char('e') | KeyCode::Char('E') => {
                 app.selecting_difficulty = false;
+                if is_bb {
+                    app.bb_difficulty = gc_shared::game::blockbreaker::BBDifficulty::Easy;
+                }
                 app.start_solo_game(gc_shared::types::Difficulty::Easy);
             }
             KeyCode::Char('h') | KeyCode::Char('H') => {
                 app.selecting_difficulty = false;
+                if is_bb {
+                    app.bb_difficulty = gc_shared::game::blockbreaker::BBDifficulty::Hard;
+                }
+                app.start_solo_game(gc_shared::types::Difficulty::Hard);
+            }
+            KeyCode::Char('x') | KeyCode::Char('X') if is_bb => {
+                app.selecting_difficulty = false;
+                app.bb_difficulty = gc_shared::game::blockbreaker::BBDifficulty::Hardcore;
                 app.start_solo_game(gc_shared::types::Difficulty::Hard);
             }
             KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
@@ -466,7 +514,8 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                 gc_shared::types::GameType::Connect4 => gc_shared::types::GameType::Checkers,
                 gc_shared::types::GameType::Checkers => gc_shared::types::GameType::Chess,
                 gc_shared::types::GameType::Chess => gc_shared::types::GameType::Snake,
-                gc_shared::types::GameType::Snake => gc_shared::types::GameType::TicTacToe,
+                gc_shared::types::GameType::Snake => gc_shared::types::GameType::BlockBreaker,
+                gc_shared::types::GameType::BlockBreaker => gc_shared::types::GameType::TicTacToe,
                 _ => gc_shared::types::GameType::TicTacToe,
             };
         }
@@ -544,6 +593,9 @@ fn handle_game_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         }
         Some(app::ClientGameState::Snake(_)) => {
             handle_snake_key(app, code, net);
+        }
+        Some(app::ClientGameState::BlockBreaker(_)) => {
+            handle_blockbreaker_key(app, code);
         }
         _ => {
             handle_tictactoe_key(app, code, net);
@@ -807,6 +859,15 @@ fn is_opposite(a: gc_shared::game::snake::Direction, b: gc_shared::game::snake::
         (a, b),
         (D::Up, D::Down) | (D::Down, D::Up) | (D::Left, D::Right) | (D::Right, D::Left)
     )
+}
+
+fn handle_blockbreaker_key(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Left | KeyCode::Char('a') | KeyCode::Char('A') => app.bb_set_dir(-1),
+        KeyCode::Right | KeyCode::Char('d') | KeyCode::Char('D') => app.bb_set_dir(1),
+        KeyCode::Char(' ') | KeyCode::Enter => app.bb_request_launch(),
+        _ => {}
+    }
 }
 
 fn handle_connect4_key(app: &mut App, code: KeyCode, net: &NetworkClient) {

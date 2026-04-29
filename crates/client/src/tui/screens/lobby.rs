@@ -99,7 +99,54 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     // Footer
-    let footer = if app.selecting_solo_game || app.selecting_multiplayer_game {
+    let footer = if app.selecting_solo_game {
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                "T",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(": TicTacToe | "),
+            Span::styled(
+                "C",
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(": Connect4 | "),
+            Span::styled(
+                "K",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(": Checkers | "),
+            Span::styled(
+                "H",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(": Chess | "),
+            Span::styled(
+                "S",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(": Snake | "),
+            Span::styled(
+                "L",
+                Style::default()
+                    .fg(Color::LightRed)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(": Block Breaker | "),
+            Span::styled("Esc", Style::default().fg(Color::Yellow)),
+            Span::raw(": Cancel"),
+        ]))
+    } else if app.selecting_multiplayer_game {
         Paragraph::new(Line::from(vec![
             Span::styled(
                 "T",
@@ -133,14 +180,20 @@ pub fn render(frame: &mut Frame, app: &App) {
             Span::raw(": Cancel"),
         ]))
     } else if app.selecting_difficulty {
-        Paragraph::new(Line::from(vec![
+        let is_bb = app.selected_game_type == gc_shared::types::GameType::BlockBreaker;
+        let mut spans = vec![
             Span::styled("E", Style::default().fg(Color::Green)),
             Span::raw(": Easy  "),
             Span::styled("H", Style::default().fg(Color::Red)),
             Span::raw(": Hard  "),
-            Span::styled("Esc", Style::default().fg(Color::DarkGray)),
-            Span::raw(": Cancel"),
-        ]))
+        ];
+        if is_bb {
+            spans.push(Span::styled("X", Style::default().fg(Color::Magenta)));
+            spans.push(Span::raw(": Hardcore  "));
+        }
+        spans.push(Span::styled("Esc", Style::default().fg(Color::DarkGray)));
+        spans.push(Span::raw(": Cancel"));
+        Paragraph::new(Line::from(spans))
     } else {
         Paragraph::new(Line::from(vec![
             Span::styled("G", Style::default().fg(Color::Cyan)),

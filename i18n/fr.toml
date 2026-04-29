@@ -56,6 +56,12 @@ game_over = "Partie terminée"
 controls = "Flèches / WASD : bouger  |  Esc : quitter  |  I : aide"
 your_turn = "À vous de jouer"
 
+[blockbreaker]
+controls = "←/→ : raquette | Espace : lancer | Esc : quitter | I : aide"
+launch_hint = "Appuyez sur Espace pour lancer la balle"
+game_over = "Partie terminée"
+restart = "Rejouer"
+
 [game_names]
 tictactoe = "Morpion"
 connect4 = "Puissance 4"

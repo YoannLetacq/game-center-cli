@@ -249,6 +249,51 @@ mod codec_regression {
     }
 
     #[test]
+    fn blockbreaker_state_roundtrip() {
+        use gc_shared::game::blockbreaker::{BBDifficulty, BBInput, BlockBreakerState, tick};
+        let mut state = BlockBreakerState::new(BBDifficulty::Hard, 1234);
+        // Run a few ticks so the state is non-trivial.
+        tick(
+            &mut state,
+            &BBInput {
+                dir: 1,
+                launch: true,
+            },
+            33,
+        );
+        for _ in 0..3 {
+            tick(
+                &mut state,
+                &BBInput {
+                    dir: 0,
+                    launch: false,
+                },
+                33,
+            );
+        }
+        let bytes = encode(&state).expect("encode BlockBreakerState");
+        let decoded: BlockBreakerState = decode(&bytes).expect("decode BlockBreakerState");
+        assert_eq!(decoded.level, state.level);
+        assert_eq!(decoded.score, state.score);
+        assert_eq!(decoded.lives, state.lives);
+        assert_eq!(decoded.bricks.len(), state.bricks.len());
+        assert_eq!(decoded.balls.len(), state.balls.len());
+    }
+
+    #[test]
+    fn blockbreaker_input_roundtrip() {
+        use gc_shared::game::blockbreaker::BBInput;
+        let input = BBInput {
+            dir: -1,
+            launch: true,
+        };
+        let bytes = encode(&input).expect("encode BBInput");
+        let decoded: BBInput = decode(&bytes).expect("decode BBInput");
+        assert_eq!(decoded.dir, input.dir);
+        assert_eq!(decoded.launch, input.launch);
+    }
+
+    #[test]
     fn game_settings_seed_roundtrip() {
         // With seed.
         let with_seed = GameSettings {
@@ -463,19 +508,53 @@ mod engine_invariants {
     }
 
     // Helper: play fool's mate (1. f3 e5 2. g4 Qh4#) and return the final state.
-    fn play_fools_mate(players: &[gc_shared::types::PlayerId; 2]) -> gc_shared::game::chess::ChessState {
+    fn play_fools_mate(
+        players: &[gc_shared::types::PlayerId; 2],
+    ) -> gc_shared::game::chess::ChessState {
         use gc_shared::game::chess::Chess;
         use gc_shared::game::traits::GameEngine;
         let mut state = Chess::initial_state(players, &gc_shared::types::GameSettings::default());
         let [p0, p1] = [players[0], players[1]];
         // 1. f3
-        Chess::apply_move(&mut state, p0, &ChessMove { from: ChessPosition::new(1, 5), to: ChessPosition::new(2, 5), promotion: None });
+        Chess::apply_move(
+            &mut state,
+            p0,
+            &ChessMove {
+                from: ChessPosition::new(1, 5),
+                to: ChessPosition::new(2, 5),
+                promotion: None,
+            },
+        );
         // 1... e5
-        Chess::apply_move(&mut state, p1, &ChessMove { from: ChessPosition::new(6, 4), to: ChessPosition::new(4, 4), promotion: None });
+        Chess::apply_move(
+            &mut state,
+            p1,
+            &ChessMove {
+                from: ChessPosition::new(6, 4),
+                to: ChessPosition::new(4, 4),
+                promotion: None,
+            },
+        );
         // 2. g4
-        Chess::apply_move(&mut state, p0, &ChessMove { from: ChessPosition::new(1, 6), to: ChessPosition::new(3, 6), promotion: None });
+        Chess::apply_move(
+            &mut state,
+            p0,
+            &ChessMove {
+                from: ChessPosition::new(1, 6),
+                to: ChessPosition::new(3, 6),
+                promotion: None,
+            },
+        );
         // 2... Qh4#
-        Chess::apply_move(&mut state, p1, &ChessMove { from: ChessPosition::new(7, 3), to: ChessPosition::new(3, 7), promotion: None });
+        Chess::apply_move(
+            &mut state,
+            p1,
+            &ChessMove {
+                from: ChessPosition::new(7, 3),
+                to: ChessPosition::new(3, 7),
+                promotion: None,
+            },
+        );
         state
     }
 
@@ -485,15 +564,53 @@ mod engine_invariants {
         // Position before the mating move must not be terminal.
         let mut state = Chess::initial_state(&players, &GameSettings::default());
         let [p0, p1] = [players[0], players[1]];
-        Chess::apply_move(&mut state, p0, &ChessMove { from: ChessPosition::new(1, 5), to: ChessPosition::new(2, 5), promotion: None });
-        Chess::apply_move(&mut state, p1, &ChessMove { from: ChessPosition::new(6, 4), to: ChessPosition::new(4, 4), promotion: None });
-        Chess::apply_move(&mut state, p0, &ChessMove { from: ChessPosition::new(1, 6), to: ChessPosition::new(3, 6), promotion: None });
-        assert!(Chess::is_terminal(&state).is_none(), "position before mating move must not be terminal");
+        Chess::apply_move(
+            &mut state,
+            p0,
+            &ChessMove {
+                from: ChessPosition::new(1, 5),
+                to: ChessPosition::new(2, 5),
+                promotion: None,
+            },
+        );
+        Chess::apply_move(
+            &mut state,
+            p1,
+            &ChessMove {
+                from: ChessPosition::new(6, 4),
+                to: ChessPosition::new(4, 4),
+                promotion: None,
+            },
+        );
+        Chess::apply_move(
+            &mut state,
+            p0,
+            &ChessMove {
+                from: ChessPosition::new(1, 6),
+                to: ChessPosition::new(3, 6),
+                promotion: None,
+            },
+        );
+        assert!(
+            Chess::is_terminal(&state).is_none(),
+            "position before mating move must not be terminal"
+        );
 
         // Now deliver the mating move.
-        Chess::apply_move(&mut state, p1, &ChessMove { from: ChessPosition::new(7, 3), to: ChessPosition::new(3, 7), promotion: None });
+        Chess::apply_move(
+            &mut state,
+            p1,
+            &ChessMove {
+                from: ChessPosition::new(7, 3),
+                to: ChessPosition::new(3, 7),
+                promotion: None,
+            },
+        );
         match Chess::is_terminal(&state) {
-            Some(GameOutcome::Win(pid)) => assert!(pid == players[0] || pid == players[1], "win must be one of the two players"),
+            Some(GameOutcome::Win(pid)) => assert!(
+                pid == players[0] || pid == players[1],
+                "win must be one of the two players"
+            ),
             Some(GameOutcome::Draw) => panic!("fool's mate must not be a draw"),
             None => panic!("expected terminal state after fool's mate"),
         }
@@ -521,9 +638,16 @@ mod engine_invariants {
         Chess::apply_move(
             &mut state,
             players[0],
-            &ChessMove { from: ChessPosition::new(1, 4), to: ChessPosition::new(3, 4), promotion: None },
+            &ChessMove {
+                from: ChessPosition::new(1, 4),
+                to: ChessPosition::new(3, 4),
+                promotion: None,
+            },
         );
-        assert_eq!(state.en_passant_target, None, "no adjacent enemy pawn means no EP target");
+        assert_eq!(
+            state.en_passant_target, None,
+            "no adjacent enemy pawn means no EP target"
+        );
 
         // Case 2: place a black pawn at d4 (row 3, col 3) adjacent to e4 landing square.
         // White plays e4 from initial; the black pawn must be at row 3 col 3 before the push.
@@ -537,7 +661,11 @@ mod engine_invariants {
         Chess::apply_move(
             &mut state2,
             players[0],
-            &ChessMove { from: ChessPosition::new(1, 4), to: ChessPosition::new(3, 4), promotion: None },
+            &ChessMove {
+                from: ChessPosition::new(1, 4),
+                to: ChessPosition::new(3, 4),
+                promotion: None,
+            },
         );
         // e3 = row 2 col 4; engine stores ep target as (ep_row, from_col) = (2, 4).
         assert_eq!(

@@ -1,3 +1,4 @@
+pub mod blockbreaker;
 pub mod checkers;
 pub mod chess;
 pub mod connect4;

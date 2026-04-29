@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use gc_shared::game::blockbreaker::{
+    self as blockbreaker, BBDifficulty, BBInput, BlockBreakerState,
+};
 use gc_shared::game::checkers::{
     self, BOARD_SIZE, Checkers, CheckersMove, CheckersState, Position, Side, Square,
 };
-use gc_shared::game::chess::{
-    self, Chess, ChessMove, ChessState, Position as ChessPosition,
-};
+use gc_shared::game::chess::{self, Chess, ChessMove, ChessState, Position as ChessPosition};
 use gc_shared::game::connect4::{self, Connect4, Connect4State};
 use gc_shared::game::snake::{self, Direction, SnakeDelta, SnakeEngine, SnakeInput, SnakeState};
 use gc_shared::game::tictactoe::{self, TicTacToe, TicTacToeState};
@@ -19,6 +20,9 @@ use gc_shared::types::{
 
 /// Solo Snake tick period. Matches server-side cadence for consistent feel.
 pub const SNAKE_TICK_MS: u64 = 100;
+
+/// Block Breaker tick period — 33 Hz physics + render budget.
+pub const BLOCKBREAKER_TICK_MS: u64 = 30;
 
 /// Derive a non-deterministic u64 seed from a fresh UUID.
 /// The client crate doesn't pull `rand`; UUID v4 already uses OS entropy.
@@ -64,6 +68,7 @@ pub enum ClientGameState {
     Checkers(CheckersState),
     Chess(ChessState),
     Snake(SnakeState),
+    BlockBreaker(BlockBreakerState),
 }
 
 /// Input sub-state for chess: cursor position, current selection, and any
@@ -229,6 +234,23 @@ pub struct App {
     pub solo_snake_last_tick: Option<Instant>,
     /// Last delta tick we applied in online mode (for out-of-order detection).
     pub snake_last_applied_tick: Option<u64>,
+
+    // --- Block Breaker state ---
+    /// Active difficulty for solo Block Breaker (separate enum since it has
+    /// three modes — Easy/Hard/Hardcore — and we don't want to widen the
+    /// shared `Difficulty` used by every bot).
+    pub bb_difficulty: BBDifficulty,
+    /// Current paddle direction inferred from the most recent key event:
+    /// -1 = Left, 0 = idle, +1 = Right. Cleared by the tick after each
+    /// PADDLE_INERTIA_DECAY_MS window expires.
+    pub bb_input_dir: i32,
+    /// Pending "launch ball" intent set by Space; consumed by the next tick.
+    pub bb_launch_pending: bool,
+    /// Last time a Left/Right key was actually pressed — used to clear
+    /// `bb_input_dir` when no key has arrived recently.
+    pub bb_last_key_at: Option<Instant>,
+    /// Last time a Block Breaker tick was applied (inline 33 Hz scheduler).
+    pub bb_last_tick: Option<Instant>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -286,6 +308,11 @@ impl App {
             snake_bot_difficulty: None,
             solo_snake_last_tick: None,
             snake_last_applied_tick: None,
+            bb_difficulty: BBDifficulty::Easy,
+            bb_input_dir: 0,
+            bb_launch_pending: false,
+            bb_last_key_at: None,
+            bb_last_tick: None,
         }
     }
 
@@ -481,9 +508,7 @@ impl App {
             GameType::Checkers => {
                 ClientGameState::Checkers(Checkers::initial_state(&players, &settings))
             }
-            GameType::Chess => {
-                ClientGameState::Chess(Chess::initial_state(&players, &settings))
-            }
+            GameType::Chess => ClientGameState::Chess(Chess::initial_state(&players, &settings)),
             GameType::Snake => {
                 // Deterministic seed per game; not recorded for rematch.
                 let snake_settings = GameSettings {
@@ -496,6 +521,28 @@ impl App {
                 let s = SnakeEngine::initial_state(&players, &snake_settings);
                 self.snake_last_applied_tick = Some(s.tick);
                 ClientGameState::Snake(s)
+            }
+            GameType::BlockBreaker => {
+                // Size the arena to the actual terminal so the playfield uses
+                // every available cell. Layout reserves 2 rows for the header
+                // and 1 for the footer, plus 2 rows for the arena's border.
+                // Inside the border we render with half-blocks (2 sub-rows
+                // per char row), so vertical resolution doubles.
+                let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+                let arena_w = cols.saturating_sub(2);
+                let inner_rows = rows.saturating_sub(2 + 1 + 2); // header+footer+borders
+                let arena_h = inner_rows.saturating_mul(2);
+                let s = BlockBreakerState::with_arena(
+                    self.bb_difficulty,
+                    rand_seed(),
+                    arena_w,
+                    arena_h,
+                );
+                self.bb_input_dir = 0;
+                self.bb_launch_pending = false;
+                self.bb_last_key_at = None;
+                self.bb_last_tick = Some(Instant::now());
+                ClientGameState::BlockBreaker(s)
             }
             _ => return,
         };
@@ -552,6 +599,8 @@ impl App {
                 }
                 // Snake is realtime — no discrete opening move. Tick loop drives it.
                 ClientGameState::Snake(_) => {}
+                // Block Breaker is solo arcade — driven by tick loop.
+                ClientGameState::BlockBreaker(_) => {}
             }
         }
     }
@@ -619,6 +668,9 @@ impl App {
             ClientGameState::Snake(_) => {
                 // Snake is realtime — driven by tick loop, not per-move calls.
             }
+            ClientGameState::BlockBreaker(_) => {
+                // Block Breaker is realtime — driven by tick loop, not per-move calls.
+            }
         }
     }
 
@@ -662,8 +714,80 @@ impl App {
             ClientGameState::Snake(_) => {
                 return self.game_over.is_none();
             }
+            ClientGameState::BlockBreaker(_) => {
+                return self.game_over.is_none();
+            }
         };
         Some(current) == self.my_player_id
+    }
+
+    // --- Block Breaker input + tick ---
+
+    /// Update paddle direction from the latest key event. dir = -1, 0, +1.
+    /// Holding the key produces repeated key events; we just refresh the
+    /// timestamp so the tick keeps the paddle moving.
+    pub fn bb_set_dir(&mut self, dir: i32) {
+        self.bb_input_dir = dir.clamp(-1, 1);
+        self.bb_last_key_at = Some(Instant::now());
+    }
+
+    /// Request the next ball launch (Space).
+    pub fn bb_request_launch(&mut self) {
+        self.bb_launch_pending = true;
+    }
+
+    /// Drive solo Block Breaker physics forward. Runs at ~33 Hz from the
+    /// existing 50 ms event tick — small overshoot is absorbed by the dt arg.
+    pub fn solo_blockbreaker_tick(&mut self) {
+        if !matches!(self.game_mode, GameMode::Solo { .. }) {
+            return;
+        }
+        if self.game_over.is_some() {
+            return;
+        }
+        let Some(ClientGameState::BlockBreaker(_)) = self.game_state.as_ref() else {
+            return;
+        };
+        let now = Instant::now();
+        let elapsed_ms = self
+            .bb_last_tick
+            .map(|t| now.duration_since(t).as_millis() as u64)
+            .unwrap_or(BLOCKBREAKER_TICK_MS);
+        if elapsed_ms < BLOCKBREAKER_TICK_MS {
+            return;
+        }
+        self.bb_last_tick = Some(now);
+
+        // Auto-clear paddle direction if no key seen recently — terminals
+        // don't expose key-up, so we infer "key released" from inactivity.
+        // The OS initial-repeat delay is typically 250–500 ms; values
+        // shorter than that produce a visible "stutter then resume" while
+        // the player holds a direction. 600 ms safely covers the worst
+        // common case at the cost of a slightly delayed actual release.
+        const DIR_TIMEOUT_MS: u128 = 600;
+        if let Some(last) = self.bb_last_key_at
+            && now.duration_since(last).as_millis() > DIR_TIMEOUT_MS
+        {
+            self.bb_input_dir = 0;
+        }
+
+        let input = BBInput {
+            dir: self.bb_input_dir,
+            launch: self.bb_launch_pending,
+        };
+        self.bb_launch_pending = false;
+
+        let dt_ms = elapsed_ms.min(60) as u32; // clamp huge gaps so physics stays sane
+        if let Some(ClientGameState::BlockBreaker(state)) = self.game_state.as_mut() {
+            blockbreaker::tick(state, &input, dt_ms);
+            if state.game_over {
+                // Synthetic outcome: arcade games don't have an "opponent",
+                // but the rematch overlay reads game_over. Mark a Draw —
+                // the renderer shows the real GAME OVER banner with score.
+                self.game_over = Some(GameOutcome::Draw);
+                let _ = self.db.record_match("Block Breaker", None, "loss");
+            }
+        }
     }
 
     /// Queue a direction change. In solo mode the tick loop picks it up; in

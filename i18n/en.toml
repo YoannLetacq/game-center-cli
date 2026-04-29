@@ -56,6 +56,12 @@ game_over = "Game Over"
 controls = "Arrows / WASD: move  |  Esc: leave  |  I: help"
 your_turn = "Your turn"
 
+[blockbreaker]
+controls = "←/→: paddle | Space: launch | Esc: leave | I: help"
+launch_hint = "Press Space to launch the ball"
+game_over = "Game Over"
+restart = "Restart"
+
 [game_names]
 tictactoe = "Tic-Tac-Toe"
 connect4 = "Connect 4"
