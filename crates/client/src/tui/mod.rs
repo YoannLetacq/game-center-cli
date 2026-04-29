@@ -171,6 +171,9 @@ fn handle_net_event(app: &mut App, event: NetEvent, net: &NetworkClient) {
             app.on_rematch_declined();
             let _ = net.send(NetCommand::ListRooms);
         }
+        NetEvent::RematchCanceled => {
+            app.on_rematch_canceled();
+        }
         NetEvent::RoomGameType { room_id, game_type } => {
             tracing::debug!(
                 ?room_id,
@@ -557,6 +560,11 @@ fn handle_game_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                     let _ = net.send(NetCommand::RequestRematch);
                 }
             }
+            KeyCode::Char('c') | KeyCode::Char('C') if app.rematch_pending => {
+                app.rematch_pending = false;
+                app.status_message = Some("Rematch request canceled".to_string());
+                let _ = net.send(NetCommand::CancelRematch);
+            }
             _ => {}
         }
         return;
@@ -812,13 +820,15 @@ fn handle_snake_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         return;
     };
 
-    // Reject 180° reversals client-side — server also re-checks.
+    // Reject 180° reversals client-side — server also re-checks. Surface a
+    // brief status message so the keypress doesn't feel silently swallowed.
     if let Some(app::ClientGameState::Snake(ref state)) = app.game_state
         && let Some(me) = app.my_player_id
         && let Some(my_arena) = state.arenas.iter().find(|a| a.owner == Some(me))
         && let Some(my_snake) = my_arena.snakes.iter().find(|s| s.player_id == me)
         && is_opposite(my_snake.direction, new_dir)
     {
+        app.status_message = Some("Cannot reverse direction".to_string());
         return;
     }
 

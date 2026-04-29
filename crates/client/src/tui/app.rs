@@ -400,14 +400,22 @@ impl App {
             if let ClientGameState::Snake(ref s) = state {
                 self.snake_last_applied_tick = Some(s.tick);
             }
+            // A tick=0 snapshot marks a fresh game (initial start or rematch).
+            // Clear any leftover game-over and rematch flags so the renderer
+            // doesn't flash a stale banner on top of the new board, regardless
+            // of whether RematchAccepted has been processed yet — for realtime
+            // games the server emits the snapshot before RematchAccepted.
+            let is_fresh_game = match &state {
+                ClientGameState::Snake(s) => s.tick == 0,
+                _ => self.screen == Screen::Room,
+            };
             self.game_state = Some(state);
-            if self.screen == Screen::Room {
-                // A fresh online game is starting — clear any leftover game-over
-                // state from a previous match so the renderer doesn't flash a
-                // stale "you lose" banner on top of the new board.
+            if is_fresh_game {
                 self.game_over = None;
                 self.rematch_pending = false;
                 self.rematch_incoming = false;
+            }
+            if self.screen == Screen::Room {
                 self.screen = Screen::InGame;
                 self.cursor_row = match self.selected_game_type {
                     GameType::Connect4 => 0, // cursor not used for row in Connect4
@@ -764,6 +772,16 @@ impl App {
                 arena_delta.grew.iter().copied().collect();
             for (pid, new_head) in &arena_delta.moves {
                 if let Some(snake) = arena.snakes.iter_mut().find(|s| s.player_id == *pid) {
+                    // Infer the committed direction from the head step so the
+                    // client-side 180° guard in handle_snake_key sees the same
+                    // direction the server just committed; otherwise direction
+                    // stays stuck on the initial value until the next snapshot
+                    // resync, blocking valid perpendicular turns.
+                    if let Some(prev_head) = snake.body.front()
+                        && let Some(dir) = direction_from_step(*prev_head, *new_head)
+                    {
+                        snake.direction = dir;
+                    }
                     snake.body.push_front(*new_head);
                     if grew.contains(pid) {
                         snake.score += 1;
@@ -1046,6 +1064,28 @@ impl App {
     pub fn on_rematch_declined(&mut self) {
         self.on_room_left();
     }
+
+    /// Called when the opponent canceled their pending rematch request:
+    /// clear our incoming-request modal and return to the game-over screen.
+    pub fn on_rematch_canceled(&mut self) {
+        self.rematch_incoming = false;
+        self.status_message = Some("Opponent canceled the rematch".to_string());
+    }
+}
+
+/// Infer a snake's committed direction from a single-step head move.
+/// Returns `None` if the positions aren't adjacent (e.g. wraparound or
+/// teleport — the engine doesn't do either today, but be defensive).
+fn direction_from_step(prev: snake::Position, next: snake::Position) -> Option<Direction> {
+    let dx = next.x as i32 - prev.x as i32;
+    let dy = next.y as i32 - prev.y as i32;
+    match (dx, dy) {
+        (1, 0) => Some(Direction::Right),
+        (-1, 0) => Some(Direction::Left),
+        (0, 1) => Some(Direction::Down),
+        (0, -1) => Some(Direction::Up),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -1209,6 +1249,43 @@ mod tests {
                 difficulty: Difficulty::Easy
             }
         ));
+    }
+
+    #[test]
+    fn snake_rematch_snapshot_clears_game_over_before_accepted_arrives() {
+        // Realtime rematch: server emits initial GameStateUpdate (tick=0) via
+        // the registry BEFORE RematchAccepted lands in the broadcast queue.
+        // The requester is sitting on InGame with rematch_pending=true and
+        // game_over=Some — receiving the fresh snapshot must clear those flags
+        // so the game-over banner / pending overlay disappear immediately.
+        let mut app = test_app();
+        app.selected_game_type = GameType::Snake;
+        app.current_game_type = GameType::Snake;
+        app.screen = Screen::InGame;
+        app.game_over = Some(GameOutcome::Draw);
+        app.rematch_pending = true;
+
+        let players = [PlayerId::new(), PlayerId::new()];
+        let settings = gc_shared::types::GameSettings {
+            seed: Some(42),
+            ..Default::default()
+        };
+        let fresh = SnakeEngine::initial_multiplayer_state(&players, &settings);
+        assert_eq!(fresh.tick, 0);
+        let bytes = gc_shared::protocol::codec::encode(&fresh).unwrap();
+
+        app.on_game_state(&bytes);
+
+        assert!(
+            app.game_over.is_none(),
+            "fresh tick=0 snapshot must clear game_over"
+        );
+        assert!(
+            !app.rematch_pending,
+            "fresh snapshot must clear rematch_pending"
+        );
+        assert!(!app.rematch_incoming);
+        assert!(matches!(app.game_state, Some(ClientGameState::Snake(_))));
     }
 
     #[test]
@@ -1440,9 +1517,71 @@ mod tests {
     }
 
     #[test]
+    fn snake_delta_updates_committed_direction() {
+        // Regression: on_snake_delta must update snake.direction from the
+        // head-step so the client-side 180° guard in handle_snake_key doesn't
+        // keep blocking valid perpendicular turns based on the stale initial
+        // direction.
+        use gc_shared::game::snake::{SnakeArenaDelta, SnakeDelta};
+
+        let mut app = test_app();
+        let p0 = PlayerId::new();
+        let p1 = PlayerId::new();
+        app.my_player_id = Some(p0);
+        app.game_mode = GameMode::Online;
+
+        let state = SnakeEngine::initial_multiplayer_state(&[p0, p1], &GameSettings::default());
+        let my_arena_idx = state
+            .arenas
+            .iter()
+            .position(|a| a.owner == Some(p0))
+            .unwrap();
+        let head = *state.arenas[my_arena_idx].snakes[0].body.front().unwrap();
+        let arena_owner = state.arenas[my_arena_idx].owner;
+        // Sanity: starting direction is Right.
+        assert_eq!(
+            state.arenas[my_arena_idx].snakes[0].direction,
+            Direction::Right
+        );
+        app.snake_last_applied_tick = Some(state.tick);
+        let starting_tick = state.tick;
+        app.game_state = Some(ClientGameState::Snake(state));
+
+        // Build a delta that moves my snake one cell UP (y - 1).
+        let new_head = snake::Position {
+            x: head.x,
+            y: head.y - 1,
+        };
+        let delta = SnakeDelta {
+            tick: starting_tick + 1,
+            arenas: vec![SnakeArenaDelta {
+                owner: arena_owner,
+                moves: vec![(p0, new_head)],
+                grew: vec![],
+                deaths: vec![],
+                new_food: vec![],
+                eaten_food: vec![],
+            }],
+            game_over: None,
+        };
+        let bytes = gc_shared::protocol::codec::encode(&delta).unwrap();
+        app.on_snake_delta(&bytes);
+
+        let Some(ClientGameState::Snake(ref s)) = app.game_state else {
+            panic!("expected Snake state");
+        };
+        let arena = s.arenas.iter().find(|a| a.owner == Some(p0)).unwrap();
+        let snake = arena.snakes.iter().find(|sn| sn.player_id == p0).unwrap();
+        assert_eq!(
+            snake.direction,
+            Direction::Up,
+            "delta must update committed direction so 180° guard sees fresh state"
+        );
+    }
+
+    #[test]
     fn room_game_type_updates_both_game_types() {
         let mut app = test_app();
-        let room_id = RoomId::new();
 
         // Initially TicTacToe
         assert_eq!(app.current_game_type, GameType::TicTacToe);

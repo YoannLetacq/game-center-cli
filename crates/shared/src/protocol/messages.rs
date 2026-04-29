@@ -48,6 +48,11 @@ pub enum ClientMsg {
     RequestRematch,
     /// Respond to an incoming rematch request.
     RematchResponse { accept: bool },
+    /// Cancel a previously sent rematch request — the requester gives up
+    /// waiting without leaving the room. The server forwards a
+    /// `RematchCanceled` to other room members so their incoming-request
+    /// modal disappears.
+    CancelRematch,
 }
 
 /// Messages sent from server to client.
@@ -96,6 +101,10 @@ pub enum ServerMsg {
     RematchAccepted,
     /// Rematch declined — both players are removed from the room.
     RematchDeclined,
+    /// The opponent canceled their pending rematch request. Clients receiving
+    /// this should clear the incoming "Y/N" overlay and return to the
+    /// game-over screen.
+    RematchCanceled,
     /// Game type for the room the client just joined or created.
     /// Sent immediately after `RoomJoined` so the client knows which game to display
     /// without inspecting the room list. Additive — backward-compatible.

@@ -1282,6 +1282,7 @@ mod protocol_regression {
             ClientMsg::RequestRematch,
             ClientMsg::RematchResponse { accept: true },
             ClientMsg::RematchResponse { accept: false },
+            ClientMsg::CancelRematch,
         ];
 
         for (i, msg) in variants.into_iter().enumerate() {
@@ -1365,6 +1366,7 @@ mod protocol_regression {
             ServerMsg::RematchRequested,
             ServerMsg::RematchAccepted,
             ServerMsg::RematchDeclined,
+            ServerMsg::RematchCanceled,
             ServerMsg::RoomGameType {
                 room_id: RoomId::new(),
                 game_type: GameType::TicTacToe,

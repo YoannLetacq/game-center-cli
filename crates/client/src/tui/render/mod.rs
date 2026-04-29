@@ -20,7 +20,12 @@ pub fn render_rematch_overlay(frame: &mut Frame, app: &App) {
         render_modal(
             frame,
             " Rematch ",
-            &["Rematch requested.", "", "Waiting for opponent..."],
+            &[
+                "Rematch requested.",
+                "",
+                "Waiting for opponent...",
+                "C: Cancel",
+            ],
             Color::Yellow,
         );
     } else if app.rematch_incoming {

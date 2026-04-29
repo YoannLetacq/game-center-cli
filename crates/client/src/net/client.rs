@@ -41,6 +41,7 @@ pub enum NetCommand {
     RematchResponse {
         accept: bool,
     },
+    CancelRematch,
     Disconnect,
 }
 
@@ -73,10 +74,15 @@ pub enum NetEvent {
     Disconnected,
     /// Opponent has sent a rematch request — show accept/decline modal.
     RematchRequested,
-    /// Rematch accepted — a new GameStateUpdate follows.
+    /// Rematch accepted. For turn-based games a fresh `GameStateUpdate` follows;
+    /// for realtime games (Snake) the initial snapshot is emitted by the server
+    /// *before* this event lands in the queue.
     RematchAccepted,
     /// Rematch declined — both players return to lobby.
     RematchDeclined,
+    /// Opponent canceled their pending rematch request — clear the local
+    /// "Y/N accept" overlay and return to the game-over screen.
+    RematchCanceled,
     /// Authoritative room game type from server.
     RoomGameType {
         room_id: gc_shared::types::RoomId,
@@ -262,6 +268,11 @@ async fn handle_command(
                 let _ = c.send(ClientMsg::RematchResponse { accept }).await;
             }
         }
+        NetCommand::CancelRematch => {
+            if let Some(c) = conn {
+                let _ = c.send(ClientMsg::CancelRematch).await;
+            }
+        }
         NetCommand::Disconnect => {
             if let Some(c) = conn {
                 c.close().await;
@@ -348,6 +359,7 @@ fn dispatch_server_msg(msg: ServerMsg, event_tx: &std_mpsc::Sender<NetEvent>) {
         ServerMsg::RematchRequested => NetEvent::RematchRequested,
         ServerMsg::RematchAccepted => NetEvent::RematchAccepted,
         ServerMsg::RematchDeclined => NetEvent::RematchDeclined,
+        ServerMsg::RematchCanceled => NetEvent::RematchCanceled,
         ServerMsg::RoomGameType { room_id, game_type } => {
             NetEvent::RoomGameType { room_id, game_type }
         }

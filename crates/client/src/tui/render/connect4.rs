@@ -80,7 +80,10 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // Footer
     let footer_text = if app.rematch_pending {
-        format!("Waiting for opponent... | Esc: {}", t.get("game.leave"))
+        format!(
+            "Waiting for opponent... | C: cancel | Esc: {}",
+            t.get("game.leave")
+        )
     } else if app.rematch_incoming {
         format!(
             "Y: Accept rematch | N: Decline | Esc: {}",

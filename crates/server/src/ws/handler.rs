@@ -695,6 +695,36 @@ async fn handle_client_msg(
                 }
             }
         }
+        ClientMsg::CancelRematch => {
+            let player_id = match session.player_id {
+                Some(id) => id,
+                None => {
+                    return HandleResult::reply(ServerMsg::AuthFail {
+                        reason: "not authenticated".to_string(),
+                    });
+                }
+            };
+            let Some(room_id) = session.current_room else {
+                return HandleResult::reply(ServerMsg::Error {
+                    code: 400,
+                    message: "not in a room".to_string(),
+                });
+            };
+            let room_players = state
+                .lobby
+                .get_room_players(room_id)
+                .await
+                .unwrap_or_default();
+            let broadcasts = room_players
+                .iter()
+                .filter(|p| p.id != player_id)
+                .map(|p| (p.id, ServerMsg::RematchCanceled))
+                .collect();
+            HandleResult {
+                response: None,
+                broadcasts,
+            }
+        }
         _ => {
             if !session.authenticated {
                 HandleResult::reply(ServerMsg::AuthFail {
