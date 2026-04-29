@@ -96,6 +96,13 @@ pub enum ServerMsg {
     RematchAccepted,
     /// Rematch declined — both players are removed from the room.
     RematchDeclined,
+    /// Game type for the room the client just joined or created.
+    /// Sent immediately after `RoomJoined` so the client knows which game to display
+    /// without inspecting the room list. Additive — backward-compatible.
+    RoomGameType {
+        room_id: RoomId,
+        game_type: GameType,
+    },
 }
 
 /// Summary of a room for the lobby list.

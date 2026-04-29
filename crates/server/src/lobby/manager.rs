@@ -464,6 +464,12 @@ impl LobbyManager {
         rooms.get(&room_id).map(|r| r.players.clone())
     }
 
+    /// Get the game type of a room.
+    pub async fn get_room_game_type(&self, room_id: RoomId) -> Option<GameType> {
+        let rooms = self.rooms.read().await;
+        rooms.get(&room_id).map(|r| r.game_type)
+    }
+
     /// Get the room a player is currently in.
     pub async fn get_player_room(&self, player_id: PlayerId) -> Option<RoomId> {
         let pr = self.player_rooms.read().await;

@@ -170,7 +170,7 @@ mod codec_regression {
 
     #[test]
     fn snake_state_roundtrip() {
-        use gc_shared::game::snake::{SnakeArena, ARENA_H, ARENA_W};
+        use gc_shared::game::snake::{ARENA_H, ARENA_W, SnakeArena};
         let pid_a = PlayerId::new();
         let pid_b = PlayerId::new();
         let body_a: VecDeque<_> = vec![
@@ -192,16 +192,14 @@ mod codec_regression {
                     owner: Some(pid_a),
                     arena_w: ARENA_W,
                     arena_h: ARENA_H,
-                    snakes: vec![
-                        Snake {
-                            player_id: pid_a,
-                            body: body_a,
-                            direction: Direction::Right,
-                            pending_direction: None,
-                            alive: true,
-                            score: 2,
-                        },
-                    ],
+                    snakes: vec![Snake {
+                        player_id: pid_a,
+                        body: body_a,
+                        direction: Direction::Right,
+                        pending_direction: None,
+                        alive: true,
+                        score: 2,
+                    }],
                     food: vec![gc_shared::game::snake::Position { x: 10, y: 5 }],
                     rng_state: 12345,
                 },
@@ -209,16 +207,14 @@ mod codec_regression {
                     owner: Some(pid_b),
                     arena_w: ARENA_W,
                     arena_h: ARENA_H,
-                    snakes: vec![
-                        Snake {
-                            player_id: pid_b,
-                            body: body_b,
-                            direction: Direction::Left,
-                            pending_direction: Some(Direction::Down),
-                            alive: false,
-                            score: 0,
-                        },
-                    ],
+                    snakes: vec![Snake {
+                        player_id: pid_b,
+                        body: body_b,
+                        direction: Direction::Left,
+                        pending_direction: Some(Direction::Down),
+                        alive: false,
+                        score: 0,
+                    }],
                     food: Vec::new(),
                     rng_state: 12345,
                 },
@@ -249,16 +245,14 @@ mod codec_regression {
         let pid = PlayerId::new();
         let delta = SnakeDelta {
             tick: 7,
-            arenas: vec![
-                SnakeArenaDelta {
-                    owner: Some(pid),
-                    moves: vec![(pid, gc_shared::game::snake::Position { x: 5, y: 5 })],
-                    grew: vec![pid],
-                    deaths: vec![],
-                    new_food: vec![gc_shared::game::snake::Position { x: 15, y: 10 }],
-                    eaten_food: vec![gc_shared::game::snake::Position { x: 5, y: 5 }],
-                },
-            ],
+            arenas: vec![SnakeArenaDelta {
+                owner: Some(pid),
+                moves: vec![(pid, gc_shared::game::snake::Position { x: 5, y: 5 })],
+                grew: vec![pid],
+                deaths: vec![],
+                new_food: vec![gc_shared::game::snake::Position { x: 15, y: 10 }],
+                eaten_food: vec![gc_shared::game::snake::Position { x: 5, y: 5 }],
+            }],
             game_over: None,
         };
         let bytes = encode(&delta).expect("encode SnakeDelta");
@@ -489,19 +483,53 @@ mod engine_invariants {
     }
 
     // Helper: play fool's mate (1. f3 e5 2. g4 Qh4#) and return the final state.
-    fn play_fools_mate(players: &[gc_shared::types::PlayerId; 2]) -> gc_shared::game::chess::ChessState {
+    fn play_fools_mate(
+        players: &[gc_shared::types::PlayerId; 2],
+    ) -> gc_shared::game::chess::ChessState {
         use gc_shared::game::chess::Chess;
         use gc_shared::game::traits::GameEngine;
         let mut state = Chess::initial_state(players, &gc_shared::types::GameSettings::default());
         let [p0, p1] = [players[0], players[1]];
         // 1. f3
-        Chess::apply_move(&mut state, p0, &ChessMove { from: ChessPosition::new(1, 5), to: ChessPosition::new(2, 5), promotion: None });
+        Chess::apply_move(
+            &mut state,
+            p0,
+            &ChessMove {
+                from: ChessPosition::new(1, 5),
+                to: ChessPosition::new(2, 5),
+                promotion: None,
+            },
+        );
         // 1... e5
-        Chess::apply_move(&mut state, p1, &ChessMove { from: ChessPosition::new(6, 4), to: ChessPosition::new(4, 4), promotion: None });
+        Chess::apply_move(
+            &mut state,
+            p1,
+            &ChessMove {
+                from: ChessPosition::new(6, 4),
+                to: ChessPosition::new(4, 4),
+                promotion: None,
+            },
+        );
         // 2. g4
-        Chess::apply_move(&mut state, p0, &ChessMove { from: ChessPosition::new(1, 6), to: ChessPosition::new(3, 6), promotion: None });
+        Chess::apply_move(
+            &mut state,
+            p0,
+            &ChessMove {
+                from: ChessPosition::new(1, 6),
+                to: ChessPosition::new(3, 6),
+                promotion: None,
+            },
+        );
         // 2... Qh4#
-        Chess::apply_move(&mut state, p1, &ChessMove { from: ChessPosition::new(7, 3), to: ChessPosition::new(3, 7), promotion: None });
+        Chess::apply_move(
+            &mut state,
+            p1,
+            &ChessMove {
+                from: ChessPosition::new(7, 3),
+                to: ChessPosition::new(3, 7),
+                promotion: None,
+            },
+        );
         state
     }
 
@@ -511,15 +539,53 @@ mod engine_invariants {
         // Position before the mating move must not be terminal.
         let mut state = Chess::initial_state(&players, &GameSettings::default());
         let [p0, p1] = [players[0], players[1]];
-        Chess::apply_move(&mut state, p0, &ChessMove { from: ChessPosition::new(1, 5), to: ChessPosition::new(2, 5), promotion: None });
-        Chess::apply_move(&mut state, p1, &ChessMove { from: ChessPosition::new(6, 4), to: ChessPosition::new(4, 4), promotion: None });
-        Chess::apply_move(&mut state, p0, &ChessMove { from: ChessPosition::new(1, 6), to: ChessPosition::new(3, 6), promotion: None });
-        assert!(Chess::is_terminal(&state).is_none(), "position before mating move must not be terminal");
+        Chess::apply_move(
+            &mut state,
+            p0,
+            &ChessMove {
+                from: ChessPosition::new(1, 5),
+                to: ChessPosition::new(2, 5),
+                promotion: None,
+            },
+        );
+        Chess::apply_move(
+            &mut state,
+            p1,
+            &ChessMove {
+                from: ChessPosition::new(6, 4),
+                to: ChessPosition::new(4, 4),
+                promotion: None,
+            },
+        );
+        Chess::apply_move(
+            &mut state,
+            p0,
+            &ChessMove {
+                from: ChessPosition::new(1, 6),
+                to: ChessPosition::new(3, 6),
+                promotion: None,
+            },
+        );
+        assert!(
+            Chess::is_terminal(&state).is_none(),
+            "position before mating move must not be terminal"
+        );
 
         // Now deliver the mating move.
-        Chess::apply_move(&mut state, p1, &ChessMove { from: ChessPosition::new(7, 3), to: ChessPosition::new(3, 7), promotion: None });
+        Chess::apply_move(
+            &mut state,
+            p1,
+            &ChessMove {
+                from: ChessPosition::new(7, 3),
+                to: ChessPosition::new(3, 7),
+                promotion: None,
+            },
+        );
         match Chess::is_terminal(&state) {
-            Some(GameOutcome::Win(pid)) => assert!(pid == players[0] || pid == players[1], "win must be one of the two players"),
+            Some(GameOutcome::Win(pid)) => assert!(
+                pid == players[0] || pid == players[1],
+                "win must be one of the two players"
+            ),
             Some(GameOutcome::Draw) => panic!("fool's mate must not be a draw"),
             None => panic!("expected terminal state after fool's mate"),
         }
@@ -547,9 +613,16 @@ mod engine_invariants {
         Chess::apply_move(
             &mut state,
             players[0],
-            &ChessMove { from: ChessPosition::new(1, 4), to: ChessPosition::new(3, 4), promotion: None },
+            &ChessMove {
+                from: ChessPosition::new(1, 4),
+                to: ChessPosition::new(3, 4),
+                promotion: None,
+            },
         );
-        assert_eq!(state.en_passant_target, None, "no adjacent enemy pawn means no EP target");
+        assert_eq!(
+            state.en_passant_target, None,
+            "no adjacent enemy pawn means no EP target"
+        );
 
         // Case 2: place a black pawn at d4 (row 3, col 3) adjacent to e4 landing square.
         // White plays e4 from initial; the black pawn must be at row 3 col 3 before the push.
@@ -563,7 +636,11 @@ mod engine_invariants {
         Chess::apply_move(
             &mut state2,
             players[0],
-            &ChessMove { from: ChessPosition::new(1, 4), to: ChessPosition::new(3, 4), promotion: None },
+            &ChessMove {
+                from: ChessPosition::new(1, 4),
+                to: ChessPosition::new(3, 4),
+                promotion: None,
+            },
         );
         // e3 = row 2 col 4; engine stores ep target as (ep_row, from_col) = (2, 4).
         assert_eq!(
@@ -598,7 +675,7 @@ mod engine_invariants {
 
     #[test]
     fn snake_wall_collision_kills_via_tick() {
-        use gc_shared::game::snake::{SnakeArena, ARENA_H, ARENA_W};
+        use gc_shared::game::snake::{ARENA_H, ARENA_W, SnakeArena};
         let pid = PlayerId::new();
         // Snake at top row (y=0) facing Up — next tick hits wall.
         let body: VecDeque<_> = vec![
@@ -633,7 +710,7 @@ mod engine_invariants {
 
     #[test]
     fn snake_head_on_collision_kills_both_via_tick() {
-        use gc_shared::game::snake::{SnakeArena, ARENA_H, ARENA_W};
+        use gc_shared::game::snake::{ARENA_H, ARENA_W, SnakeArena};
         let pid_a = PlayerId::new();
         let pid_b = PlayerId::new();
         // Two snakes one cell apart, facing each other.
@@ -690,7 +767,7 @@ mod engine_invariants {
 
     #[test]
     fn snake_food_growth_via_tick() {
-        use gc_shared::game::snake::{SnakeArena, ARENA_H, ARENA_W};
+        use gc_shared::game::snake::{ARENA_H, ARENA_W, SnakeArena};
         let pid = PlayerId::new();
         let food_pos = gc_shared::game::snake::Position { x: 6, y: 5 };
         let body: VecDeque<_> = vec![
@@ -944,7 +1021,11 @@ mod bot_regression {
             let pid0 = state.arenas[0].snakes[0].player_id;
             let pid1 = state.arenas[0].snakes[1].player_id;
             for &pid in &[pid0, pid1] {
-                let snake = state.arenas[0].snakes.iter().find(|s| s.player_id == pid).unwrap();
+                let snake = state.arenas[0]
+                    .snakes
+                    .iter()
+                    .find(|s| s.player_id == pid)
+                    .unwrap();
                 let current = snake.direction;
                 for &diff in &[Difficulty::Easy, Difficulty::Hard] {
                     let mv = snake::bot_move(&state.arenas[0], pid, diff);
@@ -1137,6 +1218,10 @@ mod protocol_regression {
             ServerMsg::RematchRequested,
             ServerMsg::RematchAccepted,
             ServerMsg::RematchDeclined,
+            ServerMsg::RoomGameType {
+                room_id: RoomId::new(),
+                game_type: GameType::TicTacToe,
+            },
         ];
 
         for (i, msg) in variants.into_iter().enumerate() {

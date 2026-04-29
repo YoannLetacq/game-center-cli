@@ -345,11 +345,22 @@ async fn handle_client_msg(
                         .get_room_players(room_id)
                         .await
                         .unwrap_or_default();
-                    HandleResult::reply(ServerMsg::RoomJoined {
-                        room_id,
-                        players,
-                        state: gc_shared::types::RoomState::Waiting,
-                    })
+                    // Emit RoomGameType immediately after RoomJoined so the client
+                    // knows which game to display without a separate room-list fetch.
+                    HandleResult {
+                        response: Some(ServerMsg::RoomJoined {
+                            room_id,
+                            players,
+                            state: gc_shared::types::RoomState::Waiting,
+                        }),
+                        broadcasts: vec![(
+                            player_id,
+                            ServerMsg::RoomGameType {
+                                room_id,
+                                game_type: *game_type,
+                            },
+                        )],
+                    }
                 }
                 Err(reason) => HandleResult::reply(ServerMsg::Error {
                     code: 400,
@@ -388,6 +399,17 @@ async fn handle_client_msg(
                         .filter(|p| p.id != player_id)
                         .map(|p| (p.id, ServerMsg::PlayerJoined(joiner.clone())))
                         .collect();
+
+                    // Emit RoomGameType to the joining player so they know which game to load.
+                    if let Some(gt) = state.lobby.get_room_game_type(*room_id).await {
+                        broadcasts.push((
+                            player_id,
+                            ServerMsg::RoomGameType {
+                                room_id: *room_id,
+                                game_type: gt,
+                            },
+                        ));
+                    }
 
                     // Check if game auto-started (room became full)
                     let room_state = {
