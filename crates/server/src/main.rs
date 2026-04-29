@@ -18,10 +18,18 @@ const MAX_CONCURRENT_CONNECTIONS: usize = 1024;
 use config::ServerConfig;
 use database::Database;
 use ws::handler::{ServerState, handle_connection};
-use ws::tls::build_tls_acceptor;
+use ws::tls::{build_dev_tls_acceptor, build_tls_acceptor};
+
+/// Dev-mode JWT secret. Only used when --dev is passed and GC_JWT_SECRET is unset.
+/// Public on purpose — this exists so a fresh clone runs out of the box for local dev.
+const DEV_JWT_SECRET: &str = "dev-only-jwt-secret-do-not-use-in-production-xxxxx";
 
 #[tokio::main]
 async fn main() {
+    // Parse CLI flags. Dev mode is opt-in via --dev or GC_DEV=1.
+    let dev_mode = std::env::args().any(|a| a == "--dev")
+        || std::env::var("GC_DEV").ok().as_deref() == Some("1");
+
     // Load config
     let config = match ServerConfig::load(std::path::Path::new("server.toml")) {
         Ok(c) => c,
@@ -44,14 +52,26 @@ async fn main() {
         }
     };
 
-    // Read JWT secret from environment
-    let jwt_secret = std::env::var(&config.auth.jwt_secret_env).unwrap_or_else(|_| {
-        error!(
-            "JWT secret env var '{}' not set — server cannot start securely",
-            config.auth.jwt_secret_env
-        );
-        std::process::exit(1);
-    });
+    // Read JWT secret from environment.
+    // In --dev mode, fall back to a built-in dev secret so a fresh clone runs out of the box.
+    let jwt_secret = match std::env::var(&config.auth.jwt_secret_env) {
+        Ok(s) => s,
+        Err(_) if dev_mode => {
+            warn!(
+                "DEV MODE: JWT secret env var '{}' not set — using built-in dev secret. \
+                 NEVER use --dev in production.",
+                config.auth.jwt_secret_env
+            );
+            DEV_JWT_SECRET.to_string()
+        }
+        Err(_) => {
+            error!(
+                "JWT secret env var '{}' not set — server cannot start securely",
+                config.auth.jwt_secret_env
+            );
+            std::process::exit(1);
+        }
+    };
 
     // Enforce minimum secret entropy — a short secret makes token forgery trivial.
     if jwt_secret.len() < 32 {
@@ -100,12 +120,30 @@ async fn main() {
         });
     }
 
-    // Build TLS
-    let tls_acceptor = match build_tls_acceptor(&config.tls.cert_path, &config.tls.key_path) {
-        Ok(a) => a,
-        Err(e) => {
-            error!("failed to load TLS certs: {e}");
-            std::process::exit(1);
+    // Build TLS. In --dev mode, generate an ephemeral self-signed cert in memory
+    // if the configured cert files are missing — useful for fresh clones since
+    // certs/ is gitignored. The client must set GC_INSECURE_TLS=1 to connect.
+    let cert_files_exist = config.tls.cert_path.exists() && config.tls.key_path.exists();
+    let tls_acceptor = if dev_mode && !cert_files_exist {
+        warn!(
+            "DEV MODE: cert/key not found at {:?}/{:?} — generating ephemeral self-signed cert. \
+             Client must set GC_INSECURE_TLS=1.",
+            config.tls.cert_path, config.tls.key_path
+        );
+        match build_dev_tls_acceptor() {
+            Ok(a) => a,
+            Err(e) => {
+                error!("failed to generate dev TLS cert: {e}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        match build_tls_acceptor(&config.tls.cert_path, &config.tls.key_path) {
+            Ok(a) => a,
+            Err(e) => {
+                error!("failed to load TLS certs: {e}");
+                std::process::exit(1);
+            }
         }
     };
 

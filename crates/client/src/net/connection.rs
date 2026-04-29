@@ -32,11 +32,19 @@ pub struct Connection {
 }
 
 impl Connection {
-    /// Check if insecure TLS mode is enabled via environment variable.
+    /// Check if insecure TLS mode is enabled.
+    ///
+    /// Triggered by any of:
+    /// - `GC_INSECURE_TLS=1` / `GC_INSECURE_TLS=true`
+    /// - `GC_DEV=1` (dev-mode shortcut, mirrors the server's `--dev`)
+    /// - `--dev` on the process command line
     fn is_insecure_tls_enabled() -> bool {
-        std::env::var("GC_INSECURE_TLS")
-            .map(|v| v == "1" || v == "true")
-            .unwrap_or(false)
+        let env_flag = |k: &str| {
+            std::env::var(k)
+                .map(|v| v == "1" || v == "true")
+                .unwrap_or(false)
+        };
+        env_flag("GC_INSECURE_TLS") || env_flag("GC_DEV") || std::env::args().any(|a| a == "--dev")
     }
 
     /// Connect to the game server via WebSocket over TLS.
