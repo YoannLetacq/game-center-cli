@@ -64,9 +64,7 @@ pub fn run(mut app: App) -> io::Result<()> {
                     Some(app::ClientGameState::Checkers(_)) => {
                         render::checkers::render(frame, &app)
                     }
-                    Some(app::ClientGameState::Chess(_)) => {
-                        render::chess::render(frame, &app)
-                    }
+                    Some(app::ClientGameState::Chess(_)) => render::chess::render(frame, &app),
                     Some(app::ClientGameState::Snake(_)) => render::snake::render(frame, &app),
                     _ => render::tictactoe::render(frame, &app),
                 },

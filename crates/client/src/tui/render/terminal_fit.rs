@@ -148,29 +148,59 @@ mod tests {
         use gc_shared::types::GameType;
         // TicTacToe minimum: 30x12, but EDGE_MIN_COLS=30, EDGE_MIN_ROWS=10
         // So 30x12 should be Ok
-        assert_eq!(check_fit_for_game(rect(30, 12), Some(GameType::TicTacToe)), TerminalFit::Ok);
+        assert_eq!(
+            check_fit_for_game(rect(30, 12), Some(GameType::TicTacToe)),
+            TerminalFit::Ok
+        );
         // Below the floor is TooSmall, not Edge
-        assert_eq!(check_fit_for_game(rect(29, 12), Some(GameType::TicTacToe)), TerminalFit::TooSmall);
+        assert_eq!(
+            check_fit_for_game(rect(29, 12), Some(GameType::TicTacToe)),
+            TerminalFit::TooSmall
+        );
         // Between floor (10) and game minimum (12) is Edge
-        assert_eq!(check_fit_for_game(rect(30, 11), Some(GameType::TicTacToe)), TerminalFit::Edge);
+        assert_eq!(
+            check_fit_for_game(rect(30, 11), Some(GameType::TicTacToe)),
+            TerminalFit::Edge
+        );
     }
 
     #[test]
     fn per_game_minimums_connect4() {
         use gc_shared::types::GameType;
         // Connect4 minimum: 50x18
-        assert_eq!(check_fit_for_game(rect(50, 18), Some(GameType::Connect4)), TerminalFit::Ok);
-        assert_eq!(check_fit_for_game(rect(49, 18), Some(GameType::Connect4)), TerminalFit::Edge);
-        assert_eq!(check_fit_for_game(rect(50, 17), Some(GameType::Connect4)), TerminalFit::Edge);
+        assert_eq!(
+            check_fit_for_game(rect(50, 18), Some(GameType::Connect4)),
+            TerminalFit::Ok
+        );
+        assert_eq!(
+            check_fit_for_game(rect(49, 18), Some(GameType::Connect4)),
+            TerminalFit::Edge
+        );
+        assert_eq!(
+            check_fit_for_game(rect(50, 17), Some(GameType::Connect4)),
+            TerminalFit::Edge
+        );
     }
 
     #[test]
     fn per_game_minimums_snake_chess_checkers() {
         use gc_shared::types::GameType;
         // Snake, Chess, Checkers: 80x24
-        assert_eq!(check_fit_for_game(rect(80, 24), Some(GameType::Snake)), TerminalFit::Ok);
-        assert_eq!(check_fit_for_game(rect(79, 24), Some(GameType::Snake)), TerminalFit::Edge);
-        assert_eq!(check_fit_for_game(rect(80, 24), Some(GameType::Chess)), TerminalFit::Ok);
-        assert_eq!(check_fit_for_game(rect(80, 24), Some(GameType::Checkers)), TerminalFit::Ok);
+        assert_eq!(
+            check_fit_for_game(rect(80, 24), Some(GameType::Snake)),
+            TerminalFit::Ok
+        );
+        assert_eq!(
+            check_fit_for_game(rect(79, 24), Some(GameType::Snake)),
+            TerminalFit::Edge
+        );
+        assert_eq!(
+            check_fit_for_game(rect(80, 24), Some(GameType::Chess)),
+            TerminalFit::Ok
+        );
+        assert_eq!(
+            check_fit_for_game(rect(80, 24), Some(GameType::Checkers)),
+            TerminalFit::Ok
+        );
     }
 }

@@ -4,9 +4,7 @@ use std::time::Instant;
 use gc_shared::game::checkers::{
     self, BOARD_SIZE, Checkers, CheckersMove, CheckersState, Position, Side, Square,
 };
-use gc_shared::game::chess::{
-    self, Chess, ChessMove, ChessState, Position as ChessPosition,
-};
+use gc_shared::game::chess::{self, Chess, ChessMove, ChessState, Position as ChessPosition};
 use gc_shared::game::connect4::{self, Connect4, Connect4State};
 use gc_shared::game::snake::{self, Direction, SnakeDelta, SnakeEngine, SnakeInput, SnakeState};
 use gc_shared::game::tictactoe::{self, TicTacToe, TicTacToeState};
@@ -481,9 +479,7 @@ impl App {
             GameType::Checkers => {
                 ClientGameState::Checkers(Checkers::initial_state(&players, &settings))
             }
-            GameType::Chess => {
-                ClientGameState::Chess(Chess::initial_state(&players, &settings))
-            }
+            GameType::Chess => ClientGameState::Chess(Chess::initial_state(&players, &settings)),
             GameType::Snake => {
                 // Deterministic seed per game; not recorded for rematch.
                 let snake_settings = GameSettings {
@@ -739,18 +735,27 @@ impl App {
         let expected = state.tick + 1;
         if delta.tick != expected {
             // Out of order — wait for the next snapshot.
-            tracing::warn!(expected, got = delta.tick, "snake delta out of order, dropping");
+            tracing::warn!(
+                expected,
+                got = delta.tick,
+                "snake delta out of order, dropping"
+            );
             return;
         }
 
         // Apply deltas per arena. For multiplayer, delta.arenas contains one delta per arena.
         for arena_delta in &delta.arenas {
-            let Some(arena) = state.arenas.iter_mut().find(|a| a.owner == arena_delta.owner) else {
+            let Some(arena) = state
+                .arenas
+                .iter_mut()
+                .find(|a| a.owner == arena_delta.owner)
+            else {
                 continue;
             };
 
             // 1) Heads / growth / tail.
-            let grew: std::collections::HashSet<PlayerId> = arena_delta.grew.iter().copied().collect();
+            let grew: std::collections::HashSet<PlayerId> =
+                arena_delta.grew.iter().copied().collect();
             for (pid, new_head) in &arena_delta.moves {
                 if let Some(snake) = arena.snakes.iter_mut().find(|s| s.player_id == *pid) {
                     snake.body.push_front(*new_head);
@@ -906,7 +911,8 @@ impl App {
                     (Square::Man(s) | Square::King(s), side2) if s == side2
                 );
                 if !matches_side {
-                    self.status_message = Some(self.translator.get("checkers.error_own_piece").to_string());
+                    self.status_message =
+                        Some(self.translator.get("checkers.error_own_piece").to_string());
                     return None;
                 }
                 self.checkers_input.stage = CheckersInputStage::TargetSelect;
@@ -941,7 +947,11 @@ impl App {
                     self.checkers_input.stage = CheckersInputStage::Chaining;
                     self.checkers_input.partial_path = tentative;
                 } else {
-                    self.status_message = Some(self.translator.get("checkers.error_illegal_target").to_string());
+                    self.status_message = Some(
+                        self.translator
+                            .get("checkers.error_illegal_target")
+                            .to_string(),
+                    );
                     self.checkers_input.reset();
                 }
                 None

@@ -44,7 +44,9 @@ impl Connection {
     /// Set GC_INSECURE_TLS=1 to accept any certificate (development only).
     pub async fn connect(url: &str) -> Result<Self, String> {
         let tls_config = if Self::is_insecure_tls_enabled() {
-            warn!("GC_INSECURE_TLS is set — TLS certificate verification is DISABLED. DO NOT USE IN PRODUCTION.");
+            warn!(
+                "GC_INSECURE_TLS is set — TLS certificate verification is DISABLED. DO NOT USE IN PRODUCTION."
+            );
             ClientConfig::builder()
                 .dangerous()
                 .with_custom_certificate_verifier(Arc::new(AcceptAnyCert))

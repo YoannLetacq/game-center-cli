@@ -1,4 +1,4 @@
-use gc_shared::game::snake::{SnakeArena, ARENA_H, ARENA_W, SnakeState};
+use gc_shared::game::snake::{ARENA_H, ARENA_W, SnakeArena, SnakeState};
 use gc_shared::types::{GameOutcome, PlayerId};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -231,7 +231,6 @@ fn render_game_over_banner(frame: &mut Frame, label: &str, arena_area: Rect) {
     );
     frame.render_widget(banner, rect);
 }
-
 
 #[cfg(test)]
 mod tests {
