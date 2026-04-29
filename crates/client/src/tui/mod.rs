@@ -165,6 +165,15 @@ fn handle_net_event(app: &mut App, event: NetEvent, net: &NetworkClient) {
             app.on_rematch_declined();
             let _ = net.send(NetCommand::ListRooms);
         }
+        NetEvent::RoomGameType { room_id, game_type } => {
+            tracing::debug!(
+                ?room_id,
+                ?game_type,
+                "received authoritative room game type"
+            );
+            app.current_game_type = game_type;
+            app.selected_game_type = game_type;
+        }
         NetEvent::Error(msg) => {
             // Route error to the right screen
             match app.screen {

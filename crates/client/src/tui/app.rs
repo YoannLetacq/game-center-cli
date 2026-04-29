@@ -1432,4 +1432,22 @@ mod tests {
         assert_eq!(state.tick, 5);
         assert_eq!(app.snake_last_applied_tick, Some(5));
     }
+
+    #[test]
+    fn room_game_type_updates_both_game_types() {
+        let mut app = test_app();
+        let room_id = RoomId::new();
+
+        // Initially TicTacToe
+        assert_eq!(app.current_game_type, GameType::TicTacToe);
+        assert_eq!(app.selected_game_type, GameType::TicTacToe);
+
+        // Simulate receiving RoomGameType for Connect4
+        app.current_game_type = GameType::Connect4;
+        app.selected_game_type = GameType::Connect4;
+
+        // Verify both were updated
+        assert_eq!(app.current_game_type, GameType::Connect4);
+        assert_eq!(app.selected_game_type, GameType::Connect4);
+    }
 }

@@ -77,6 +77,11 @@ pub enum NetEvent {
     RematchAccepted,
     /// Rematch declined — both players return to lobby.
     RematchDeclined,
+    /// Authoritative room game type from server.
+    RoomGameType {
+        room_id: gc_shared::types::RoomId,
+        game_type: gc_shared::types::GameType,
+    },
     #[allow(dead_code)]
     ServerMessage(ServerMsg),
 }
@@ -343,6 +348,9 @@ fn dispatch_server_msg(msg: ServerMsg, event_tx: &std_mpsc::Sender<NetEvent>) {
         ServerMsg::RematchRequested => NetEvent::RematchRequested,
         ServerMsg::RematchAccepted => NetEvent::RematchAccepted,
         ServerMsg::RematchDeclined => NetEvent::RematchDeclined,
+        ServerMsg::RoomGameType { room_id, game_type } => {
+            NetEvent::RoomGameType { room_id, game_type }
+        }
         other => NetEvent::ServerMessage(other),
     };
     let _ = event_tx.send(event);
