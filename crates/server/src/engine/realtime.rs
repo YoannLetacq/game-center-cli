@@ -27,7 +27,7 @@ pub enum RealtimeGame {
 impl RealtimeGame {
     pub fn new(game_type: GameType, players: &[PlayerId], settings: &GameSettings) -> Option<Self> {
         match game_type {
-            GameType::Snake => Some(Self::Snake(SnakeEngine::initial_state(players, settings))),
+            GameType::Snake => Some(Self::Snake(SnakeEngine::initial_multiplayer_state(players, settings))),
             _ => None,
         }
     }
@@ -84,7 +84,11 @@ impl RealtimeGame {
 
     pub fn players(&self) -> Vec<PlayerId> {
         match self {
-            Self::Snake(state) => state.snakes.iter().map(|s| s.player_id).collect(),
+            Self::Snake(state) => state
+                .arenas
+                .iter()
+                .filter_map(|a| a.owner)
+                .collect(),
         }
     }
 

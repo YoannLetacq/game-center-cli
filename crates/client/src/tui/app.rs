@@ -713,11 +713,12 @@ impl App {
             return;
         };
 
+        // Solo uses a single arena (arenas[0])
         let mut inputs: HashMap<PlayerId, SnakeInput> = HashMap::new();
         if let Some(dir) = self.snake_pending_direction {
             inputs.insert(player_id, SnakeInput { direction: dir });
         }
-        let bot_input = snake::bot_move(state, bot_id, difficulty);
+        let bot_input = snake::bot_move(&state.arenas[0], bot_id, difficulty);
         inputs.insert(bot_id, bot_input);
         let delta = SnakeEngine::tick(state, &inputs);
         if let Some(outcome) = delta.game_over {
@@ -741,33 +742,41 @@ impl App {
             return;
         }
 
-        // 1) Heads / growth / tail.
-        let grew: std::collections::HashSet<PlayerId> = delta.grew.iter().copied().collect();
-        for (pid, new_head) in &delta.moves {
-            if let Some(snake) = state.snakes.iter_mut().find(|s| s.player_id == *pid) {
-                snake.body.push_front(*new_head);
-                if grew.contains(pid) {
-                    snake.score += 1;
-                } else {
-                    snake.body.pop_back();
+        // Apply deltas per arena. For multiplayer, delta.arenas contains one delta per arena.
+        for arena_delta in &delta.arenas {
+            let Some(arena) = state.arenas.iter_mut().find(|a| a.owner == arena_delta.owner) else {
+                continue;
+            };
+
+            // 1) Heads / growth / tail.
+            let grew: std::collections::HashSet<PlayerId> = arena_delta.grew.iter().copied().collect();
+            for (pid, new_head) in &arena_delta.moves {
+                if let Some(snake) = arena.snakes.iter_mut().find(|s| s.player_id == *pid) {
+                    snake.body.push_front(*new_head);
+                    if grew.contains(pid) {
+                        snake.score += 1;
+                    } else {
+                        snake.body.pop_back();
+                    }
                 }
             }
-        }
-        // 2) Deaths.
-        for pid in &delta.deaths {
-            if let Some(snake) = state.snakes.iter_mut().find(|s| s.player_id == *pid) {
-                snake.alive = false;
+            // 2) Deaths.
+            for pid in &arena_delta.deaths {
+                if let Some(snake) = arena.snakes.iter_mut().find(|s| s.player_id == *pid) {
+                    snake.alive = false;
+                }
+            }
+            // 3) Food churn.
+            for eaten in &arena_delta.eaten_food {
+                if let Some(idx) = arena.food.iter().position(|p| p == eaten) {
+                    arena.food.remove(idx);
+                }
+            }
+            for spawned in &arena_delta.new_food {
+                arena.food.push(*spawned);
             }
         }
-        // 3) Food churn.
-        for eaten in &delta.eaten_food {
-            if let Some(idx) = state.food.iter().position(|p| p == eaten) {
-                state.food.remove(idx);
-            }
-        }
-        for spawned in &delta.new_food {
-            state.food.push(*spawned);
-        }
+
         state.tick = delta.tick;
         self.snake_last_applied_tick = Some(delta.tick);
         if let Some(outcome) = delta.game_over {

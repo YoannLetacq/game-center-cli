@@ -784,7 +784,8 @@ fn handle_snake_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
     // Reject 180° reversals client-side — server also re-checks.
     if let Some(app::ClientGameState::Snake(ref state)) = app.game_state
         && let Some(me) = app.my_player_id
-        && let Some(my_snake) = state.snakes.iter().find(|s| s.player_id == me)
+        && let Some(my_arena) = state.arenas.iter().find(|a| a.owner == Some(me))
+        && let Some(my_snake) = my_arena.snakes.iter().find(|s| s.player_id == me)
         && is_opposite(my_snake.direction, new_dir)
     {
         return;

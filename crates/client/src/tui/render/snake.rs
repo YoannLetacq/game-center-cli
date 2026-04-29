@@ -1,4 +1,4 @@
-use gc_shared::game::snake::{ARENA_H, ARENA_W, SnakeState};
+use gc_shared::game::snake::{SnakeArena, ARENA_H, ARENA_W, SnakeState};
 use gc_shared::types::{GameOutcome, PlayerId};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -104,11 +104,15 @@ pub fn render(frame: &mut Frame, app: &App) {
 fn score_tuple(state: &SnakeState, me: Option<PlayerId>) -> (u32, u32) {
     let mut you = 0u32;
     let mut opp = 0u32;
-    for snake in &state.snakes {
-        if Some(snake.player_id) == me {
-            you = snake.score;
-        } else {
-            opp = snake.score;
+
+    // Collect scores from all arenas
+    for arena in &state.arenas {
+        for snake in &arena.snakes {
+            if Some(snake.player_id) == me {
+                you = snake.score;
+            } else {
+                opp = snake.score;
+            }
         }
     }
     (you, opp)
@@ -121,21 +125,56 @@ fn fixed_arena_rect(area: Rect, w: u16, h: u16) -> Rect {
 }
 
 fn render_arena(frame: &mut Frame, state: &SnakeState, app: &App, area: Rect) {
+    // Check if solo (1 arena) or multiplayer (2+ arenas)
+    if state.arenas.len() == 1 {
+        // Solo mode: render single arena
+        render_single_arena(frame, &state.arenas[0], app, area, None);
+    } else {
+        // Multiplayer mode: render two side-by-side
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+
+        let my_arena = state
+            .arenas
+            .iter()
+            .find(|a| a.owner == app.my_player_id)
+            .unwrap_or(&state.arenas[0]);
+        let opp_arena = state
+            .arenas
+            .iter()
+            .find(|a| a.owner != app.my_player_id)
+            .unwrap_or(&state.arenas[0]);
+
+        render_single_arena(frame, my_arena, app, chunks[0], Some(" You "));
+        render_single_arena(frame, opp_arena, app, chunks[1], Some(" Opponent "));
+    }
+}
+
+fn render_single_arena(
+    frame: &mut Frame,
+    arena: &SnakeArena,
+    app: &App,
+    area: Rect,
+    title_override: Option<&str>,
+) {
+    let title = title_override.unwrap_or(" Snake ");
     let block = Block::default()
-        .title(" Snake ")
+        .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Build an index: position → (player-color-kind, is_head).
+    // Build an index: position → color for rendering
     let mut heads: std::collections::HashMap<(u16, u16), Color> = std::collections::HashMap::new();
     let mut bodies: std::collections::HashMap<(u16, u16), Color> = std::collections::HashMap::new();
-    for snake in &state.snakes {
+    for snake in &arena.snakes {
         let color = if Some(snake.player_id) == app.my_player_id {
             Color::Green
         } else {
-            Color::Cyan
+            Color::Red
         };
         for (i, pos) in snake.body.iter().enumerate() {
             if i == 0 {
@@ -146,7 +185,7 @@ fn render_arena(frame: &mut Frame, state: &SnakeState, app: &App, area: Rect) {
         }
     }
     let food: std::collections::HashSet<(u16, u16)> =
-        state.food.iter().map(|p| (p.x, p.y)).collect();
+        arena.food.iter().map(|p| (p.x, p.y)).collect();
 
     let mut lines: Vec<Line> = Vec::with_capacity(ARENA_H as usize);
     for y in 0..ARENA_H {
@@ -161,7 +200,7 @@ fn render_arena(frame: &mut Frame, state: &SnakeState, app: &App, area: Rect) {
             } else if let Some(color) = bodies.get(&key) {
                 spans.push(Span::styled("▓▓", Style::default().fg(*color)));
             } else if food.contains(&key) {
-                spans.push(Span::styled("●●", Style::default().fg(Color::Red)));
+                spans.push(Span::styled("●●", Style::default().fg(Color::Yellow)));
             } else {
                 spans.push(Span::raw("  "));
             }
@@ -169,8 +208,8 @@ fn render_arena(frame: &mut Frame, state: &SnakeState, app: &App, area: Rect) {
         lines.push(Line::from(spans));
     }
 
-    let arena = Paragraph::new(lines);
-    frame.render_widget(arena, inner);
+    let arena_widget = Paragraph::new(lines);
+    frame.render_widget(arena_widget, inner);
 }
 
 fn render_game_over_banner(frame: &mut Frame, label: &str, arena_area: Rect) {

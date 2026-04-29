@@ -170,6 +170,7 @@ mod codec_regression {
 
     #[test]
     fn snake_state_roundtrip() {
+        use gc_shared::game::snake::{SnakeArena, ARENA_H, ARENA_W};
         let pid_a = PlayerId::new();
         let pid_b = PlayerId::new();
         let body_a: VecDeque<_> = vec![
@@ -186,65 +187,90 @@ mod codec_regression {
         .into_iter()
         .collect();
         let state = SnakeState {
-            arena_w: 32,
-            arena_h: 18,
-            snakes: vec![
-                Snake {
-                    player_id: pid_a,
-                    body: body_a,
-                    direction: Direction::Right,
-                    pending_direction: None,
-                    alive: true,
-                    score: 2,
+            arenas: vec![
+                SnakeArena {
+                    owner: Some(pid_a),
+                    arena_w: ARENA_W,
+                    arena_h: ARENA_H,
+                    snakes: vec![
+                        Snake {
+                            player_id: pid_a,
+                            body: body_a,
+                            direction: Direction::Right,
+                            pending_direction: None,
+                            alive: true,
+                            score: 2,
+                        },
+                    ],
+                    food: vec![gc_shared::game::snake::Position { x: 10, y: 5 }],
+                    rng_state: 12345,
                 },
-                Snake {
-                    player_id: pid_b,
-                    body: body_b,
-                    direction: Direction::Left,
-                    pending_direction: Some(Direction::Down),
-                    alive: false,
-                    score: 0,
+                SnakeArena {
+                    owner: Some(pid_b),
+                    arena_w: ARENA_W,
+                    arena_h: ARENA_H,
+                    snakes: vec![
+                        Snake {
+                            player_id: pid_b,
+                            body: body_b,
+                            direction: Direction::Left,
+                            pending_direction: Some(Direction::Down),
+                            alive: false,
+                            score: 0,
+                        },
+                    ],
+                    food: Vec::new(),
+                    rng_state: 12345,
                 },
             ],
-            food: vec![gc_shared::game::snake::Position { x: 10, y: 5 }],
             tick: 42,
             rng_seed: 99,
-            rng_state: 12345,
             game_over: Some(GameOutcome::Win(pid_a)),
         };
         let bytes = encode(&state).expect("encode SnakeState");
         let decoded: SnakeState = decode(&bytes).expect("decode SnakeState");
         assert_eq!(decoded.tick, state.tick);
-        assert_eq!(decoded.arena_w, state.arena_w);
-        assert_eq!(decoded.arena_h, state.arena_h);
-        assert_eq!(decoded.snakes.len(), 2);
-        assert_eq!(decoded.snakes[0].score, 2);
-        assert!(decoded.snakes[0].alive);
-        assert!(!decoded.snakes[1].alive);
-        assert_eq!(decoded.food.len(), 1);
+        assert_eq!(decoded.rng_seed, state.rng_seed);
+        assert_eq!(decoded.arenas.len(), 2);
+        assert_eq!(decoded.arenas[0].owner, Some(pid_a));
+        assert_eq!(decoded.arenas[0].snakes.len(), 1);
+        assert_eq!(decoded.arenas[0].snakes[0].score, 2);
+        assert!(decoded.arenas[0].snakes[0].alive);
+        assert_eq!(decoded.arenas[1].owner, Some(pid_b));
+        assert_eq!(decoded.arenas[1].snakes.len(), 1);
+        assert!(!decoded.arenas[1].snakes[0].alive);
+        assert_eq!(decoded.arenas[0].food.len(), 1);
         assert!(matches!(decoded.game_over, Some(GameOutcome::Win(_))));
     }
 
     #[test]
     fn snake_delta_roundtrip() {
+        use gc_shared::game::snake::SnakeArenaDelta;
         let pid = PlayerId::new();
         let delta = SnakeDelta {
             tick: 7,
-            moves: vec![(pid, gc_shared::game::snake::Position { x: 5, y: 5 })],
-            grew: vec![pid],
-            deaths: vec![],
-            new_food: vec![gc_shared::game::snake::Position { x: 15, y: 10 }],
-            eaten_food: vec![gc_shared::game::snake::Position { x: 5, y: 5 }],
+            arenas: vec![
+                SnakeArenaDelta {
+                    owner: Some(pid),
+                    moves: vec![(pid, gc_shared::game::snake::Position { x: 5, y: 5 })],
+                    grew: vec![pid],
+                    deaths: vec![],
+                    new_food: vec![gc_shared::game::snake::Position { x: 15, y: 10 }],
+                    eaten_food: vec![gc_shared::game::snake::Position { x: 5, y: 5 }],
+                },
+            ],
             game_over: None,
         };
         let bytes = encode(&delta).expect("encode SnakeDelta");
         let decoded: SnakeDelta = decode(&bytes).expect("decode SnakeDelta");
         assert_eq!(decoded.tick, delta.tick);
-        assert_eq!(decoded.moves.len(), 1);
-        assert_eq!(decoded.grew.len(), 1);
-        assert!(decoded.deaths.is_empty());
-        assert_eq!(decoded.new_food.len(), 1);
-        assert_eq!(decoded.eaten_food.len(), 1);
+        assert_eq!(decoded.arenas.len(), 1);
+        assert_eq!(decoded.arenas[0].owner, Some(pid));
+        assert_eq!(decoded.arenas[0].moves.len(), 1);
+        assert_eq!(decoded.arenas[0].grew.len(), 1);
+        assert!(decoded.arenas[0].deaths.is_empty());
+        assert_eq!(decoded.arenas[0].new_food.len(), 1);
+        assert_eq!(decoded.arenas[0].eaten_food.len(), 1);
         assert!(decoded.game_over.is_none());
     }
 
@@ -558,7 +584,7 @@ mod engine_invariants {
             },
         );
         // Snake 0 starts facing Right; attempt reversal to Left.
-        let original_dir = state.snakes[0].direction;
+        let original_dir = state.arenas[0].snakes[0].direction;
         let mut inputs = HashMap::new();
         inputs.insert(
             players[0],
@@ -567,11 +593,12 @@ mod engine_invariants {
             },
         );
         SnakeEngine::tick(&mut state, &inputs);
-        assert_eq!(state.snakes[0].direction, original_dir);
+        assert_eq!(state.arenas[0].snakes[0].direction, original_dir);
     }
 
     #[test]
     fn snake_wall_collision_kills_via_tick() {
+        use gc_shared::game::snake::{SnakeArena, ARENA_H, ARENA_W};
         let pid = PlayerId::new();
         // Snake at top row (y=0) facing Up — next tick hits wall.
         let body: VecDeque<_> = vec![
@@ -581,28 +608,32 @@ mod engine_invariants {
         .into_iter()
         .collect();
         let mut state = SnakeState {
-            arena_w: ARENA_W,
-            arena_h: ARENA_H,
-            snakes: vec![Snake {
-                player_id: pid,
-                body,
-                direction: Direction::Up,
-                pending_direction: None,
-                alive: true,
-                score: 0,
+            arenas: vec![SnakeArena {
+                owner: None,
+                arena_w: ARENA_W,
+                arena_h: ARENA_H,
+                snakes: vec![Snake {
+                    player_id: pid,
+                    body,
+                    direction: Direction::Up,
+                    pending_direction: None,
+                    alive: true,
+                    score: 0,
+                }],
+                food: Vec::new(),
+                rng_state: 1,
             }],
-            food: Vec::new(),
             tick: 0,
             rng_seed: 1,
-            rng_state: 1,
             game_over: None,
         };
         SnakeEngine::tick(&mut state, &HashMap::new());
-        assert!(!state.snakes[0].alive);
+        assert!(!state.arenas[0].snakes[0].alive);
     }
 
     #[test]
     fn snake_head_on_collision_kills_both_via_tick() {
+        use gc_shared::game::snake::{SnakeArena, ARENA_H, ARENA_W};
         let pid_a = PlayerId::new();
         let pid_b = PlayerId::new();
         // Two snakes one cell apart, facing each other.
@@ -619,35 +650,38 @@ mod engine_invariants {
         .into_iter()
         .collect();
         let mut state = SnakeState {
-            arena_w: ARENA_W,
-            arena_h: ARENA_H,
-            snakes: vec![
-                Snake {
-                    player_id: pid_a,
-                    body: body_a,
-                    direction: Direction::Right,
-                    pending_direction: None,
-                    alive: true,
-                    score: 0,
-                },
-                Snake {
-                    player_id: pid_b,
-                    body: body_b,
-                    direction: Direction::Left,
-                    pending_direction: None,
-                    alive: true,
-                    score: 0,
-                },
-            ],
-            food: Vec::new(),
+            arenas: vec![SnakeArena {
+                owner: None,
+                arena_w: ARENA_W,
+                arena_h: ARENA_H,
+                snakes: vec![
+                    Snake {
+                        player_id: pid_a,
+                        body: body_a,
+                        direction: Direction::Right,
+                        pending_direction: None,
+                        alive: true,
+                        score: 0,
+                    },
+                    Snake {
+                        player_id: pid_b,
+                        body: body_b,
+                        direction: Direction::Left,
+                        pending_direction: None,
+                        alive: true,
+                        score: 0,
+                    },
+                ],
+                food: Vec::new(),
+                rng_state: 1,
+            }],
             tick: 0,
             rng_seed: 1,
-            rng_state: 1,
             game_over: None,
         };
         SnakeEngine::tick(&mut state, &HashMap::new());
-        assert!(!state.snakes[0].alive, "snake A should be dead");
-        assert!(!state.snakes[1].alive, "snake B should be dead");
+        assert!(!state.arenas[0].snakes[0].alive, "snake A should be dead");
+        assert!(!state.arenas[0].snakes[1].alive, "snake B should be dead");
         assert!(
             matches!(state.game_over, Some(GameOutcome::Draw)),
             "head-on collision must produce Draw"
@@ -656,6 +690,7 @@ mod engine_invariants {
 
     #[test]
     fn snake_food_growth_via_tick() {
+        use gc_shared::game::snake::{SnakeArena, ARENA_H, ARENA_W};
         let pid = PlayerId::new();
         let food_pos = gc_shared::game::snake::Position { x: 6, y: 5 };
         let body: VecDeque<_> = vec![
@@ -666,33 +701,36 @@ mod engine_invariants {
         .collect();
         let initial_len = body.len();
         let mut state = SnakeState {
-            arena_w: ARENA_W,
-            arena_h: ARENA_H,
-            snakes: vec![Snake {
-                player_id: pid,
-                body,
-                direction: Direction::Right,
-                pending_direction: None,
-                alive: true,
-                score: 0,
+            arenas: vec![SnakeArena {
+                owner: None,
+                arena_w: ARENA_W,
+                arena_h: ARENA_H,
+                snakes: vec![Snake {
+                    player_id: pid,
+                    body,
+                    direction: Direction::Right,
+                    pending_direction: None,
+                    alive: true,
+                    score: 0,
+                }],
+                food: vec![food_pos],
+                rng_state: 123,
             }],
-            food: vec![food_pos],
             tick: 0,
             rng_seed: 123,
-            rng_state: 123,
             game_over: None,
         };
         let delta = SnakeEngine::tick(&mut state, &HashMap::new());
         assert_eq!(
-            state.snakes[0].body.len(),
+            state.arenas[0].snakes[0].body.len(),
             initial_len + 1,
             "body should grow by 1"
         );
-        assert!(delta.grew.contains(&pid));
-        assert_eq!(delta.eaten_food, vec![food_pos]);
+        assert!(delta.arenas[0].grew.contains(&pid));
+        assert_eq!(delta.arenas[0].eaten_food, vec![food_pos]);
         // A new food should have been spawned.
-        assert_eq!(delta.new_food.len(), 1);
-        assert_eq!(state.food.len(), 1);
+        assert_eq!(delta.arenas[0].new_food.len(), 1);
+        assert_eq!(state.arenas[0].food.len(), 1);
     }
 
     #[test]
@@ -705,8 +743,8 @@ mod engine_invariants {
         let s1 = SnakeEngine::initial_state(&players, &settings);
         let s2 = SnakeEngine::initial_state(&players, &settings);
         assert_eq!(s1.rng_seed, s2.rng_seed);
-        assert_eq!(s1.rng_state, s2.rng_state);
-        assert_eq!(s1.food, s2.food);
+        assert_eq!(s1.arenas[0].rng_state, s2.arenas[0].rng_state);
+        assert_eq!(s1.arenas[0].food, s2.arenas[0].food);
         assert_eq!(s1.tick, s2.tick);
 
         // Apply identical tick sequences and compare deltas.
@@ -716,8 +754,8 @@ mod engine_invariants {
             let d1 = SnakeEngine::tick(&mut state1, &HashMap::new());
             let d2 = SnakeEngine::tick(&mut state2, &HashMap::new());
             assert_eq!(d1.tick, d2.tick);
-            assert_eq!(d1.new_food, d2.new_food);
-            assert_eq!(d1.moves.len(), d2.moves.len());
+            assert_eq!(d1.arenas[0].new_food, d2.arenas[0].new_food);
+            assert_eq!(d1.arenas[0].moves.len(), d2.arenas[0].moves.len());
         }
     }
 
@@ -730,7 +768,7 @@ mod engine_invariants {
         };
         let mut state = SnakeEngine::initial_state(&players, &settings);
         // Drive snake[0] into the wall to force a death.
-        let pid0 = state.snakes[0].player_id;
+        let pid0 = state.arenas[0].snakes[0].player_id;
         let mut inputs = HashMap::new();
         inputs.insert(
             pid0,
@@ -756,7 +794,7 @@ mod engine_invariants {
             GameOutcome::Draw => {}
         }
         // All dead snakes cannot be the sole alive snake.
-        let alive_count = state.snakes.iter().filter(|s| s.alive).count();
+        let alive_count = state.arenas[0].snakes.iter().filter(|s| s.alive).count();
         assert!(
             alive_count <= 1,
             "at most one snake can be alive at terminal"
@@ -903,13 +941,13 @@ mod bot_regression {
                 ..GameSettings::default()
             };
             let state = SnakeEngine::initial_state(&players, &settings);
-            let pid0 = state.snakes[0].player_id;
-            let pid1 = state.snakes[1].player_id;
+            let pid0 = state.arenas[0].snakes[0].player_id;
+            let pid1 = state.arenas[0].snakes[1].player_id;
             for &pid in &[pid0, pid1] {
-                let snake = state.snakes.iter().find(|s| s.player_id == pid).unwrap();
+                let snake = state.arenas[0].snakes.iter().find(|s| s.player_id == pid).unwrap();
                 let current = snake.direction;
                 for &diff in &[Difficulty::Easy, Difficulty::Hard] {
-                    let mv = snake::bot_move(&state, pid, diff);
+                    let mv = snake::bot_move(&state.arenas[0], pid, diff);
                     assert_ne!(
                         mv.direction,
                         dir_opposite(current),
@@ -954,18 +992,18 @@ mod bot_regression {
                 break;
             }
             let mut inputs = HashMap::new();
-            for snake in &state.snakes {
+            for snake in &state.arenas[0].snakes {
                 if !snake.alive {
                     continue;
                 }
-                let mv = snake::bot_move(&state, snake.player_id, Difficulty::Easy);
+                let mv = snake::bot_move(&state.arenas[0], snake.player_id, Difficulty::Easy);
                 inputs.insert(snake.player_id, mv);
             }
             SnakeEngine::tick(&mut state, &inputs);
         }
         // Game either reached terminal or still has alive snakes — no panic is the key assertion.
         let terminal = SnakeEngine::is_terminal(&state);
-        let alive = state.snakes.iter().any(|s| s.alive);
+        let alive = state.arenas[0].snakes.iter().any(|s| s.alive);
         assert!(
             terminal.is_some() || alive,
             "game should be terminal or have alive snakes after bot run"
