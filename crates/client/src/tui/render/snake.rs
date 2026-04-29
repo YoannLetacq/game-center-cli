@@ -93,7 +93,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     if app.show_help {
-        render_help_modal(frame);
+        super::render_help_overlay(frame, app);
     }
 
     if app.rematch_pending || app.rematch_incoming {
@@ -232,50 +232,6 @@ fn render_game_over_banner(frame: &mut Frame, label: &str, arena_area: Rect) {
     frame.render_widget(banner, rect);
 }
 
-fn render_help_modal(frame: &mut Frame) {
-    let area = centered_rect(60, 60, frame.area());
-    frame.render_widget(Clear, area);
-
-    let lines = vec![
-        "Goal: Eat food to grow. Last snake alive wins.",
-        "Don't hit walls or any snake body (including your own).",
-        "",
-        "Controls:",
-        "- Arrow keys or W/A/S/D: change direction",
-        "- I: Close help",
-        "- Esc: Leave game",
-    ];
-    let help_text: Vec<Line> = lines.into_iter().map(Line::from).collect();
-
-    let block = Block::default()
-        .title("Snake Rules")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
-    let paragraph = Paragraph::new(help_text)
-        .block(block)
-        .alignment(Alignment::Left);
-    frame.render_widget(paragraph, area);
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
-}
 
 #[cfg(test)]
 mod tests {

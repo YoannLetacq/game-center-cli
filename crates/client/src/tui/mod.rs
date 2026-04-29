@@ -213,7 +213,7 @@ fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, net: &Netwo
         return;
     }
 
-    if app.screen == Screen::InGame && (code == KeyCode::Char('i') || code == KeyCode::Char('I')) {
+    if app.screen == Screen::InGame && code == KeyCode::Char('?') {
         app.show_help = !app.show_help;
         return;
     }

@@ -153,10 +153,34 @@ impl TurnBasedGame {
     /// Get the serialized game state.
     pub fn encode_state(&self) -> Vec<u8> {
         match &self.state {
-            GameState::TicTacToe(state) => codec::encode(state).unwrap_or_default(),
-            GameState::Connect4(state) => codec::encode(state).unwrap_or_default(),
-            GameState::Checkers(state) => codec::encode(state).unwrap_or_default(),
-            GameState::Chess(state) => codec::encode(state).unwrap_or_default(),
+            GameState::TicTacToe(state) => match codec::encode(state) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!("failed to encode TicTacToe state: {}", e);
+                    Vec::new()
+                }
+            },
+            GameState::Connect4(state) => match codec::encode(state) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!("failed to encode Connect4 state: {}", e);
+                    Vec::new()
+                }
+            },
+            GameState::Checkers(state) => match codec::encode(state) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!("failed to encode Checkers state: {}", e);
+                    Vec::new()
+                }
+            },
+            GameState::Chess(state) => match codec::encode(state) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!("failed to encode Chess state: {}", e);
+                    Vec::new()
+                }
+            },
         }
     }
 }
@@ -183,7 +207,13 @@ where
 
     G::apply_move(state, player, &mv);
 
-    Ok(codec::encode(state).unwrap_or_default())
+    codec::encode(state).map_err(|e| {
+        tracing::error!("failed to encode game state after move: {}", e);
+        ServerMsg::Error {
+            code: 500,
+            message: "failed to encode game state".to_string(),
+        }
+    })
 }
 
 #[cfg(test)]

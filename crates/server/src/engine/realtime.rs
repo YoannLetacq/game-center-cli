@@ -71,7 +71,13 @@ impl RealtimeGame {
 
     pub fn snapshot_bytes(&self) -> Vec<u8> {
         match self {
-            Self::Snake(state) => codec::encode(state).unwrap_or_default(),
+            Self::Snake(state) => match codec::encode(state) {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("failed to encode Snake state snapshot: {}", e);
+                    Vec::new()
+                }
+            },
         }
     }
 
