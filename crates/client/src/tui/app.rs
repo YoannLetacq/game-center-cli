@@ -1,6 +1,9 @@
 use gc_shared::game::checkers::{
     self, BOARD_SIZE, Checkers, CheckersMove, CheckersState, Position, Side, Square,
 };
+use gc_shared::game::chess::{
+    self, Chess, ChessMove, ChessState, Position as ChessPosition,
+};
 use gc_shared::game::connect4::{self, Connect4, Connect4State};
 use gc_shared::game::tictactoe::{self, TicTacToe, TicTacToeState};
 use gc_shared::game::traits::GameEngine;
@@ -43,6 +46,41 @@ pub enum ClientGameState {
     TicTacToe(TicTacToeState),
     Connect4(Connect4State),
     Checkers(CheckersState),
+    Chess(ChessState),
+}
+
+/// Input sub-state for chess: cursor position, current selection, and any
+/// pending pawn-promotion target awaiting the user's piece choice.
+#[derive(Debug, Clone)]
+pub struct ChessInputState {
+    pub selected_from: Option<ChessPosition>,
+    pub pending_promotion: Option<(ChessPosition, ChessPosition)>,
+    pub cursor_row: u8,
+    pub cursor_col: u8,
+}
+
+impl ChessInputState {
+    pub fn new() -> Self {
+        Self {
+            selected_from: None,
+            pending_promotion: None,
+            cursor_row: 0,
+            cursor_col: 4,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.selected_from = None;
+        self.pending_promotion = None;
+        self.cursor_row = 0;
+        self.cursor_col = 4;
+    }
+}
+
+impl Default for ChessInputState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Stage of the checkers input state machine.
@@ -154,6 +192,9 @@ pub struct App {
     // Checkers input state machine (only used when game is Checkers).
     pub checkers_input: CheckersInputState,
 
+    // Chess input state (only used when game is Chess).
+    pub chess_input: ChessInputState,
+
     /// Transient status/error line shown inside the game screen
     /// (e.g. illegal selection feedback for Checkers).
     pub status_message: Option<String>,
@@ -206,6 +247,7 @@ impl App {
             rematch_incoming: false,
             solo_player_went_first: None,
             checkers_input: CheckersInputState::new(),
+            chess_input: ChessInputState::new(),
             status_message: None,
         }
     }
@@ -310,6 +352,9 @@ impl App {
             GameType::Checkers => gc_shared::protocol::codec::decode::<CheckersState>(state_data)
                 .ok()
                 .map(ClientGameState::Checkers),
+            GameType::Chess => gc_shared::protocol::codec::decode::<ChessState>(state_data)
+                .ok()
+                .map(ClientGameState::Chess),
             _ => None,
         };
         if let Some(state) = decoded {
@@ -328,6 +373,9 @@ impl App {
                 };
                 if self.selected_game_type == GameType::Checkers {
                     self.checkers_input.reset();
+                }
+                if self.selected_game_type == GameType::Chess {
+                    self.chess_input.reset();
                 }
             }
         }
@@ -356,10 +404,10 @@ impl App {
         });
         let bot_id = PlayerId::new();
 
-        // First game: pick starting player randomly.
+        // First game in a session: player opens (no surprise bot move on a fresh board).
         // Each rematch: alternate who goes first.
         let player_goes_first = match self.solo_player_went_first {
-            None => uuid::Uuid::new_v4().as_bytes()[0] & 1 == 0,
+            None => true,
             Some(went_first) => !went_first,
         };
         self.solo_player_went_first = Some(player_goes_first);
@@ -381,6 +429,9 @@ impl App {
             GameType::Checkers => {
                 ClientGameState::Checkers(Checkers::initial_state(&players, &settings))
             }
+            GameType::Chess => {
+                ClientGameState::Chess(Chess::initial_state(&players, &settings))
+            }
             _ => return,
         };
 
@@ -398,6 +449,7 @@ impl App {
             _ => 1,
         };
         self.checkers_input.reset();
+        self.chess_input.reset();
         self.status_message = None;
         self.screen = Screen::InGame;
 
@@ -423,6 +475,14 @@ impl App {
                     Checkers::apply_move(s, bot_id, &bot_mv);
                     if let Some(outcome) = Checkers::is_terminal(s) {
                         self.game_over = Some(outcome);
+                    }
+                }
+                ClientGameState::Chess(s) => {
+                    if let Some(bot_mv) = chess::bot_move(s, difficulty) {
+                        Chess::apply_move(s, bot_id, &bot_mv);
+                        if let Some(outcome) = Chess::is_terminal(s) {
+                            self.game_over = Some(outcome);
+                        }
                     }
                 }
             }
@@ -485,6 +545,10 @@ impl App {
                 // Checkers uses the path-based `submit_checkers_move` API;
                 // this single-step (row, col) path is not expressive enough.
             }
+            ClientGameState::Chess(_) => {
+                // Chess uses `submit_chess_move(ChessMove)`; the (row, col)
+                // path is not expressive enough for from/to/promotion.
+            }
         }
     }
 
@@ -502,6 +566,10 @@ impl App {
         self.game_mode = GameMode::Online;
         self.game_state = None;
         self.game_over = None;
+        self.solo_player_went_first = None;
+        self.checkers_input.reset();
+        self.chess_input.reset();
+        self.status_message = None;
         self.screen = if self.authenticated {
             Screen::Lobby
         } else {
@@ -519,6 +587,7 @@ impl App {
             ClientGameState::TicTacToe(s) => TicTacToe::current_player(s),
             ClientGameState::Connect4(s) => Connect4::current_player(s),
             ClientGameState::Checkers(s) => Checkers::current_player(s),
+            ClientGameState::Chess(s) => Chess::current_player(s),
         };
         Some(current) == self.my_player_id
     }
@@ -686,6 +755,47 @@ impl App {
         }
     }
 
+    /// Apply a Chess move locally in solo mode and let the bot respond.
+    /// Returns `true` if the move was valid and applied (solo) or accepted
+    /// for sending (online).
+    pub fn submit_chess_move(&mut self, mv: ChessMove) -> bool {
+        let Some(state) = self.game_state.as_mut() else {
+            return false;
+        };
+        let ClientGameState::Chess(state) = state else {
+            return false;
+        };
+        let Some(player_id) = self.my_player_id else {
+            return false;
+        };
+        match self.game_mode {
+            GameMode::Solo { difficulty } => {
+                if Chess::validate_move(state, player_id, &mv).is_err() {
+                    return false;
+                }
+                Chess::apply_move(state, player_id, &mv);
+                if let Some(outcome) = Chess::is_terminal(state) {
+                    self.game_over = Some(outcome);
+                    self.chess_input.reset();
+                    return true;
+                }
+                let bot_id = Chess::current_player(state);
+                if let Some(bot_mv) = chess::bot_move(state, difficulty) {
+                    Chess::apply_move(state, bot_id, &bot_mv);
+                    if let Some(outcome) = Chess::is_terminal(state) {
+                        self.game_over = Some(outcome);
+                    }
+                }
+                self.chess_input.reset();
+                true
+            }
+            GameMode::Online => {
+                self.chess_input.reset();
+                true
+            }
+        }
+    }
+
     /// Called when a player joins our room.
     pub fn on_player_joined(&mut self, player: PlayerInfo) {
         if !self.current_room_players.iter().any(|p| p.id == player.id) {
@@ -718,6 +828,7 @@ impl App {
             _ => 1,
         };
         self.checkers_input.reset();
+        self.chess_input.reset();
         self.status_message = None;
     }
 

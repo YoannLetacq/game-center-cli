@@ -416,7 +416,7 @@ mod tests {
         let host = make_player("alice");
 
         let result = lobby
-            .create_room(GameType::Chess, GameSettings::default(), host)
+            .create_room(GameType::Snake, GameSettings::default(), host)
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not yet available"));

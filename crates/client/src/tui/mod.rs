@@ -58,6 +58,9 @@ pub fn run(mut app: App) -> io::Result<()> {
                     Some(app::ClientGameState::Checkers(_)) => {
                         render::checkers::render(frame, &app)
                     }
+                    Some(app::ClientGameState::Chess(_)) => {
+                        render::chess::render(frame, &app)
+                    }
                     _ => render::tictactoe::render(frame, &app),
                 },
             }
@@ -170,6 +173,13 @@ fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, net: &Netwo
             return;
         }
         match app.screen {
+            Screen::InGame
+                if matches!(&app.game_state, Some(app::ClientGameState::Checkers(_)))
+                    && app.checkers_input.stage != app::CheckersInputStage::Idle =>
+            {
+                app.checkers_cancel_selection();
+                return;
+            }
             Screen::InGame if app.game_mode != GameMode::Online => {
                 app.leave_solo_game();
                 return;
@@ -228,6 +238,11 @@ fn handle_login_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
             }
             KeyCode::Char('k') | KeyCode::Char('K') => {
                 app.selected_game_type = gc_shared::types::GameType::Checkers;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
+            KeyCode::Char('h') | KeyCode::Char('H') => {
+                app.selected_game_type = gc_shared::types::GameType::Chess;
                 app.selecting_solo_game = false;
                 app.selecting_difficulty = true;
             }
@@ -326,6 +341,11 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                 app.selecting_solo_game = false;
                 app.selecting_difficulty = true;
             }
+            KeyCode::Char('h') | KeyCode::Char('H') => {
+                app.selected_game_type = gc_shared::types::GameType::Chess;
+                app.selecting_solo_game = false;
+                app.selecting_difficulty = true;
+            }
             KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
                 app.selecting_solo_game = false;
             }
@@ -373,6 +393,18 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                     settings,
                 });
             }
+            KeyCode::Char('h') | KeyCode::Char('H') => {
+                app.selected_game_type = gc_shared::types::GameType::Chess;
+                app.selecting_multiplayer_game = false;
+
+                let settings = gc_shared::types::GameSettings::default();
+                app.current_game_type = app.selected_game_type;
+                app.current_max_players = settings.max_players;
+                let _ = net.send(NetCommand::CreateRoom {
+                    game_type: app.selected_game_type,
+                    settings,
+                });
+            }
             KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
                 app.selecting_multiplayer_game = false;
             }
@@ -410,7 +442,8 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
             app.selected_game_type = match app.selected_game_type {
                 gc_shared::types::GameType::TicTacToe => gc_shared::types::GameType::Connect4,
                 gc_shared::types::GameType::Connect4 => gc_shared::types::GameType::Checkers,
-                gc_shared::types::GameType::Checkers => gc_shared::types::GameType::TicTacToe,
+                gc_shared::types::GameType::Checkers => gc_shared::types::GameType::Chess,
+                gc_shared::types::GameType::Chess => gc_shared::types::GameType::TicTacToe,
                 _ => gc_shared::types::GameType::TicTacToe,
             };
         }
@@ -483,8 +516,159 @@ fn handle_game_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         Some(app::ClientGameState::Checkers(_)) => {
             handle_checkers_key(app, code, net);
         }
+        Some(app::ClientGameState::Chess(_)) => {
+            handle_chess_key(app, code, net);
+        }
         _ => {
             handle_tictactoe_key(app, code, net);
+        }
+    }
+}
+
+fn handle_chess_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
+    use gc_shared::game::chess::{self as chess_engine, Chess, ChessMove, PieceKind, Position};
+    use gc_shared::game::traits::GameEngine;
+
+    // Pending promotion: only Q/R/B/N or Esc/Backspace are meaningful.
+    if let Some((from, to)) = app.chess_input.pending_promotion {
+        match code {
+            KeyCode::Char('q') | KeyCode::Char('Q') => {
+                submit_chess_promotion(app, net, from, to, PieceKind::Queen);
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                submit_chess_promotion(app, net, from, to, PieceKind::Rook);
+            }
+            KeyCode::Char('b') | KeyCode::Char('B') => {
+                submit_chess_promotion(app, net, from, to, PieceKind::Bishop);
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                submit_chess_promotion(app, net, from, to, PieceKind::Knight);
+            }
+            KeyCode::Backspace | KeyCode::Esc => {
+                app.chess_input.pending_promotion = None;
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    match code {
+        KeyCode::Up => {
+            if app.chess_input.cursor_row < 7 {
+                app.chess_input.cursor_row += 1;
+            }
+        }
+        KeyCode::Down => {
+            if app.chess_input.cursor_row > 0 {
+                app.chess_input.cursor_row -= 1;
+            }
+        }
+        KeyCode::Left => {
+            if app.chess_input.cursor_col > 0 {
+                app.chess_input.cursor_col -= 1;
+            }
+        }
+        KeyCode::Right => {
+            if app.chess_input.cursor_col < 7 {
+                app.chess_input.cursor_col += 1;
+            }
+        }
+        KeyCode::Backspace => {
+            app.chess_input.selected_from = None;
+            app.status_message = None;
+        }
+        KeyCode::Enter => {
+            if !app.is_our_turn() {
+                return;
+            }
+            let cursor = Position::new(app.chess_input.cursor_row, app.chess_input.cursor_col);
+            let Some(app::ClientGameState::Chess(state)) = app.game_state.as_ref() else {
+                return;
+            };
+            let player_id = match app.my_player_id {
+                Some(id) => id,
+                None => return,
+            };
+            let our_side = if Chess::current_player(state) == player_id {
+                if state.current_turn == 0 {
+                    gc_shared::game::chess::Side::White
+                } else {
+                    gc_shared::game::chess::Side::Black
+                }
+            } else {
+                return;
+            };
+
+            match app.chess_input.selected_from {
+                None => {
+                    // Pick a piece of our side.
+                    if let Some(piece) = state.board[cursor.row as usize][cursor.col as usize]
+                        && piece.side == our_side
+                    {
+                        app.chess_input.selected_from = Some(cursor);
+                        app.status_message = None;
+                    } else {
+                        app.status_error = Some("Select one of your own pieces".to_string());
+                    }
+                }
+                Some(from) => {
+                    if from == cursor {
+                        // Deselect.
+                        app.chess_input.selected_from = None;
+                        return;
+                    }
+                    // Check if any legal move from->cursor exists, and whether it
+                    // requires promotion.
+                    let legals: Vec<ChessMove> = chess_engine::legal_moves(state)
+                        .into_iter()
+                        .filter(|m| m.from == from && m.to == cursor)
+                        .collect();
+                    if legals.is_empty() {
+                        app.status_error = Some("Illegal move".to_string());
+                        return;
+                    }
+                    if legals.iter().any(|m| m.promotion.is_some()) {
+                        // Defer until user picks the promotion piece.
+                        app.chess_input.pending_promotion = Some((from, cursor));
+                    } else {
+                        let mv = legals[0];
+                        finalize_chess_move(app, net, mv);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn submit_chess_promotion(
+    app: &mut App,
+    net: &NetworkClient,
+    from: gc_shared::game::chess::Position,
+    to: gc_shared::game::chess::Position,
+    promotion: gc_shared::game::chess::PieceKind,
+) {
+    let mv = gc_shared::game::chess::ChessMove {
+        from,
+        to,
+        promotion: Some(promotion),
+    };
+    app.chess_input.pending_promotion = None;
+    finalize_chess_move(app, net, mv);
+}
+
+fn finalize_chess_move(app: &mut App, net: &NetworkClient, mv: gc_shared::game::chess::ChessMove) {
+    match app.game_mode {
+        GameMode::Solo { .. } => {
+            if !app.submit_chess_move(mv) {
+                app.status_error = Some("Illegal move".to_string());
+            }
+        }
+        GameMode::Online => {
+            if let Ok(data) = gc_shared::protocol::codec::encode(&mv) {
+                let _ = net.send(NetCommand::GameAction { data });
+                app.chess_input.selected_from = None;
+            }
         }
     }
 }
@@ -495,7 +679,9 @@ fn handle_checkers_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
         KeyCode::Down => app.checkers_cursor_step(1, 0),
         KeyCode::Left => app.checkers_cursor_step(0, -1),
         KeyCode::Right => app.checkers_cursor_step(0, 1),
-        KeyCode::Backspace => app.checkers_cancel_selection(),
+        KeyCode::Backspace | KeyCode::Char('c') | KeyCode::Char('C') => {
+            app.checkers_cancel_selection()
+        }
         KeyCode::Enter => {
             if !app.is_our_turn() {
                 return;
