@@ -129,6 +129,13 @@ pub fn render(frame: &mut Frame, app: &App) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw(": Chess | "),
+            Span::styled(
+                "S",
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(": Snake | "),
             Span::styled("Esc", Style::default().fg(Color::Yellow)),
             Span::raw(": Cancel"),
         ]))

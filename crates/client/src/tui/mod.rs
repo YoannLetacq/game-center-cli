@@ -446,6 +446,18 @@ fn handle_lobby_key(app: &mut App, code: KeyCode, net: &NetworkClient) {
                     settings,
                 });
             }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                app.selected_game_type = gc_shared::types::GameType::Snake;
+                app.selecting_multiplayer_game = false;
+
+                let settings = gc_shared::types::GameSettings::default();
+                app.current_game_type = app.selected_game_type;
+                app.current_max_players = settings.max_players;
+                let _ = net.send(NetCommand::CreateRoom {
+                    game_type: app.selected_game_type,
+                    settings,
+                });
+            }
             KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('B') => {
                 app.selecting_multiplayer_game = false;
             }
