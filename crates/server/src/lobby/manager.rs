@@ -7,7 +7,9 @@ use tokio::task::JoinHandle;
 use tracing::info;
 
 use gc_shared::protocol::messages::{RoomSummary, ServerMsg};
-use gc_shared::types::{GameOutcome, GameSettings, GameType, PlayerId, PlayerInfo, RoomId};
+use gc_shared::types::{
+    GameOutcome, GameSettings, GameType, PlayerId, PlayerInfo, RoomId, SessionId,
+};
 
 use crate::engine::realtime::{self, RealtimeGame};
 use crate::engine::turn_based::TurnBasedGame;
@@ -19,7 +21,10 @@ const EMPTY_ROOM_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Handle to the per-connection broadcast channels. Set once from main after
 /// the `ServerState` is wired up so realtime tick tasks can reach clients.
-pub type PlayerRegistry = Arc<RwLock<HashMap<PlayerId, mpsc::Sender<ServerMsg>>>>;
+///
+/// Value is `(session_id, sender)` — the session_id allows detecting and safely
+/// replacing stale entries when the same player re-authenticates from a new connection.
+pub type PlayerRegistry = Arc<RwLock<HashMap<PlayerId, (SessionId, mpsc::Sender<ServerMsg>)>>>;
 
 /// Manages all active game rooms.
 ///
@@ -81,6 +86,9 @@ impl LobbyManager {
     }
 
     /// Create a new room. Returns the room ID.
+    ///
+    /// Holds `player_rooms` write-lock across the whole operation so that concurrent
+    /// calls for the same player cannot both pass the "already in a room" check.
     pub async fn create_room(
         &self,
         game_type: GameType,
@@ -98,24 +106,23 @@ impl LobbyManager {
 
         let host_id = host.id;
 
-        // Check if player is already in a room
-        {
-            let pr = self.player_rooms.read().await;
-            if pr.contains_key(&host_id) {
-                return Err("already in a room".to_string());
-            }
+        // Atomically check-and-reserve: hold the write lock so no concurrent
+        // create_room / join_room for this player can slip through.
+        let mut pr = self.player_rooms.write().await;
+        if pr.contains_key(&host_id) {
+            return Err("already in a room".to_string());
         }
 
         let room_id = RoomId::new();
         let room = Room::new(room_id, game_type, settings, host);
 
+        // Reserve the slot before inserting the room so any error path is clean.
+        pr.insert(host_id, room_id);
+        drop(pr);
+
         {
             let mut rooms = self.rooms.write().await;
             rooms.insert(room_id, room);
-        }
-        {
-            let mut pr = self.player_rooms.write().await;
-            pr.insert(host_id, room_id);
         }
 
         info!(%room_id, %host_id, ?game_type, "room created");
@@ -123,6 +130,9 @@ impl LobbyManager {
     }
 
     /// Join an existing room.
+    ///
+    /// Holds `player_rooms` write-lock across the whole operation so that concurrent
+    /// calls for the same player cannot both pass the "already in a room" check.
     pub async fn join_room(
         &self,
         room_id: RoomId,
@@ -130,12 +140,11 @@ impl LobbyManager {
     ) -> Result<Vec<PlayerInfo>, String> {
         let player_id = player.id;
 
-        // Check if player is already in a room
-        {
-            let pr = self.player_rooms.read().await;
-            if pr.contains_key(&player_id) {
-                return Err("already in a room".to_string());
-            }
+        // Atomically check-and-reserve: hold the write lock for the duration of
+        // the room mutation so no concurrent call for this player can sneak in.
+        let mut pr = self.player_rooms.write().await;
+        if pr.contains_key(&player_id) {
+            return Err("already in a room".to_string());
         }
 
         let players = {
@@ -145,10 +154,8 @@ impl LobbyManager {
             room.players.clone()
         };
 
-        {
-            let mut pr = self.player_rooms.write().await;
-            pr.insert(player_id, room_id);
-        }
+        pr.insert(player_id, room_id);
+        drop(pr);
 
         // Auto-start game if room is full
         let is_full = {
@@ -228,7 +235,7 @@ impl LobbyManager {
                 state_data: initial_snapshot,
             };
             for pid in &recipients {
-                if let Some(tx) = reg.get(pid) {
+                if let Some((_, tx)) = reg.get(pid) {
                     let _ = tx.try_send(msg.clone());
                 }
             }
@@ -342,7 +349,7 @@ impl LobbyManager {
             };
             let reg = registry.read().await;
             for pid in &recipients {
-                if let Some(tx) = reg.get(pid) {
+                if let Some((_, tx)) = reg.get(pid) {
                     let _ = tx.try_send(msg.clone());
                 }
             }

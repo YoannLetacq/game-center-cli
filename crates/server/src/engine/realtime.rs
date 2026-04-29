@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tokio::sync::{RwLock, mpsc, watch};
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 use tracing::{info, warn};
@@ -13,7 +13,7 @@ use gc_shared::protocol::codec;
 use gc_shared::protocol::messages::ServerMsg;
 use gc_shared::types::{GameOutcome, GameSettings, GameType, PlayerId, RoomId};
 
-use crate::lobby::manager::LobbyManager;
+use crate::lobby::manager::{LobbyManager, PlayerRegistry};
 
 /// Realtime tick period (100 ms = 10 Hz).
 const TICK_MS: u64 = 100;
@@ -27,7 +27,9 @@ pub enum RealtimeGame {
 impl RealtimeGame {
     pub fn new(game_type: GameType, players: &[PlayerId], settings: &GameSettings) -> Option<Self> {
         match game_type {
-            GameType::Snake => Some(Self::Snake(SnakeEngine::initial_multiplayer_state(players, settings))),
+            GameType::Snake => Some(Self::Snake(SnakeEngine::initial_multiplayer_state(
+                players, settings,
+            ))),
             _ => None,
         }
     }
@@ -90,11 +92,7 @@ impl RealtimeGame {
 
     pub fn players(&self) -> Vec<PlayerId> {
         match self {
-            Self::Snake(state) => state
-                .arenas
-                .iter()
-                .filter_map(|a| a.owner)
-                .collect(),
+            Self::Snake(state) => state.arenas.iter().filter_map(|a| a.owner).collect(),
         }
     }
 
@@ -109,7 +107,7 @@ pub fn spawn_tick_task(
     room_id: RoomId,
     game: Arc<Mutex<RealtimeGame>>,
     inputs: Arc<Mutex<HashMap<PlayerId, Vec<u8>>>>,
-    players_registry: Arc<RwLock<HashMap<PlayerId, mpsc::Sender<ServerMsg>>>>,
+    players_registry: PlayerRegistry,
     mut cancel: watch::Receiver<bool>,
     lobby: Arc<LobbyManager>,
 ) -> JoinHandle<()> {
@@ -166,7 +164,7 @@ pub fn spawn_tick_task(
                     delta_data: delta_bytes,
                 };
                 for pid in &recipients {
-                    if let Some(tx) = registry.get(pid)
+                    if let Some((_, tx)) = registry.get(pid)
                         && let Err(e) = tx.try_send(delta_msg.clone())
                     {
                         warn!(%pid, "dropping delta for slow/full client: {e}");
@@ -178,7 +176,7 @@ pub fn spawn_tick_task(
                         state_data: snap,
                     };
                     for pid in &recipients {
-                        if let Some(tx) = registry.get(pid)
+                        if let Some((_, tx)) = registry.get(pid)
                             && let Err(e) = tx.try_send(snap_msg.clone())
                         {
                             warn!(%pid, "dropping resync for slow/full client: {e}");
@@ -188,7 +186,7 @@ pub fn spawn_tick_task(
                 if let Some(outcome) = outcome.clone() {
                     let over_msg = ServerMsg::GameOver { outcome };
                     for pid in &recipients {
-                        if let Some(tx) = registry.get(pid) {
+                        if let Some((_, tx)) = registry.get(pid) {
                             let _ = tx.try_send(over_msg.clone());
                         }
                     }

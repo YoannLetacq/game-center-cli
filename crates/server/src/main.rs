@@ -65,6 +65,17 @@ async fn main() {
 
     let jwt = auth::jwt::JwtManager::new(jwt_secret.as_bytes(), config.auth.token_expiry_secs);
 
+    // Cap concurrent Argon2 operations to half the available CPUs (min 2).
+    let argon2_permits = {
+        let cpus = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(2);
+        std::cmp::max(2, cpus / 2)
+    };
+    let argon2_semaphore = Arc::new(Semaphore::new(argon2_permits));
+
+    let auth_limiter = auth::rate_limit::AuthRateLimiter::new();
+
     let lobby = Arc::new(lobby::manager::LobbyManager::new());
     let players = ws::handler::PlayerRegistry::default();
     lobby.attach(Arc::clone(&players));
@@ -73,6 +84,8 @@ async fn main() {
         jwt,
         lobby,
         players,
+        auth_limiter,
+        argon2_semaphore,
     });
 
     // Spawn periodic room cleanup

@@ -33,6 +33,7 @@ use gc_shared::types::{PlayerId, PlayerInfo};
 use uuid::Uuid;
 
 use crate::auth::jwt::JwtManager;
+use crate::auth::rate_limit::AuthRateLimiter;
 use crate::database::Database;
 use crate::lobby::manager::LobbyManager;
 use crate::ws::session::Session;
@@ -45,6 +46,10 @@ pub struct ServerState {
     pub jwt: JwtManager,
     pub lobby: Arc<LobbyManager>,
     pub players: PlayerRegistry,
+    /// Sliding-window rate limiter for login/register attempts.
+    pub auth_limiter: AuthRateLimiter,
+    /// Limits concurrent Argon2 hashing operations to avoid CPU starvation.
+    pub argon2_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 /// Result of handling a client message: direct response + broadcasts to other players.
@@ -181,7 +186,7 @@ pub async fn handle_connection(
                         // Send broadcasts to other players
                         for (target_id, msg) in result.broadcasts {
                             let players = state.players.read().await;
-                            if let Some(tx) = players.get(&target_id) {
+                            if let Some((_, tx)) = players.get(&target_id) {
                                 let _ = tx.try_send(msg);
                             }
                         }
@@ -205,9 +210,18 @@ pub async fn handle_connection(
         }
     }
 
-    // Clean up: unregister from player registry
+    // Clean up: unregister from player registry only if this session still owns the slot
+    // (a re-login on a new connection may have already replaced it).
     if let Some(player_id) = session.player_id {
-        state.players.write().await.remove(&player_id);
+        {
+            let mut players = state.players.write().await;
+            if players
+                .get(&player_id)
+                .is_some_and(|(sid, _)| *sid == session.session_id)
+            {
+                players.remove(&player_id);
+            }
+        }
 
         // Remove from room and notify remaining players
         if let Some((room_id, _is_empty, game_aborted, was_realtime)) =
@@ -232,7 +246,7 @@ pub async fn handle_connection(
                 };
 
                 for p in &room_players {
-                    if let Some(tx) = players.get(&p.id) {
+                    if let Some((_, tx)) = players.get(&p.id) {
                         let _ = tx.try_send(leave_msg.clone());
                         if let Some(winner) = remaining_id {
                             let _ = tx.try_send(ServerMsg::GameOver {
@@ -261,11 +275,7 @@ async fn handle_client_msg(
             if let Some(ServerMsg::AuthOk { .. }) = &resp
                 && let Some(pid) = session.player_id
             {
-                state
-                    .players
-                    .write()
-                    .await
-                    .insert(pid, broadcast_tx.clone());
+                register_session(pid, session.session_id, broadcast_tx, &state.players).await;
             }
             HandleResult {
                 response: resp,
@@ -278,11 +288,7 @@ async fn handle_client_msg(
             if let Some(ServerMsg::AuthOk { .. }) = &resp
                 && let Some(pid) = session.player_id
             {
-                state
-                    .players
-                    .write()
-                    .await
-                    .insert(pid, broadcast_tx.clone());
+                register_session(pid, session.session_id, broadcast_tx, &state.players).await;
             }
             HandleResult {
                 response: resp,
@@ -294,11 +300,7 @@ async fn handle_client_msg(
             if let Some(ServerMsg::AuthOk { .. }) = &resp
                 && let Some(pid) = session.player_id
             {
-                state
-                    .players
-                    .write()
-                    .await
-                    .insert(pid, broadcast_tx.clone());
+                register_session(pid, session.session_id, broadcast_tx, &state.players).await;
             }
             HandleResult {
                 response: resp,
@@ -690,6 +692,19 @@ async fn handle_register(
         });
     }
 
+    // Rate-limit by IP + username before doing any expensive work.
+    if !state
+        .auth_limiter
+        .check_and_record(session.peer_addr.ip(), username)
+    {
+        warn!(username, %session.peer_addr, "register rate-limited");
+        return Some(ServerMsg::AuthFail {
+            reason: "too many attempts, try again later".to_string(),
+        });
+    }
+
+    // Acquire semaphore permit before Argon2 hashing to cap concurrent CPU cost.
+    let _permit = state.argon2_semaphore.acquire().await.ok();
     let pw = password.to_string();
     let password_hash = match tokio::task::spawn_blocking(move || hash_password(&pw)).await {
         Ok(Ok(h)) => h,
@@ -784,6 +799,18 @@ async fn handle_login(
             reason: "invalid credentials".to_string(),
         });
     }
+
+    // Rate-limit by IP + username before doing any expensive work.
+    if !state
+        .auth_limiter
+        .check_and_record(session.peer_addr.ip(), username)
+    {
+        warn!(username, %session.peer_addr, "login rate-limited");
+        return Some(ServerMsg::AuthFail {
+            reason: "too many attempts, try again later".to_string(),
+        });
+    }
+
     let db_conn = state.db.conn();
     let uname = username.to_string();
     let user = tokio::task::spawn_blocking(move || {
@@ -807,6 +834,8 @@ async fn handle_login(
         }
     };
 
+    // Acquire semaphore permit before Argon2 verification to cap concurrent CPU cost.
+    let _permit = state.argon2_semaphore.acquire().await.ok();
     let pw = password.to_string();
     let hash = stored_hash.clone();
     let valid = tokio::task::spawn_blocking(move || verify_password(&pw, &hash))
@@ -876,6 +905,30 @@ fn handle_authenticate(
         }
         Err(reason) => Some(ServerMsg::AuthFail { reason }),
     }
+}
+
+/// Register (or replace) a player in the registry.
+///
+/// If the player is already registered under a different session (duplicate login),
+/// send the old connection a 409 goodbye so it knows it has been superseded, then
+/// replace the entry with the new `(session_id, sender)`.
+async fn register_session(
+    player_id: PlayerId,
+    session_id: gc_shared::types::SessionId,
+    broadcast_tx: &mpsc::Sender<ServerMsg>,
+    players: &PlayerRegistry,
+) {
+    let mut reg = players.write().await;
+    if let Some((old_sid, old_tx)) = reg.get(&player_id)
+        && *old_sid != session_id
+    {
+        let _ = old_tx.try_send(ServerMsg::Error {
+            code: 409,
+            message: "session replaced by another login".to_string(),
+        });
+        warn!(%player_id, "replaced existing session on re-login");
+    }
+    reg.insert(player_id, (session_id, broadcast_tx.clone()));
 }
 
 fn hash_password(password: &str) -> Result<String, String> {
