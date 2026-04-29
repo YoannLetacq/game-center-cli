@@ -366,8 +366,13 @@ impl LobbyManager {
         info!(%room_id, "game finished and state cleaned up");
     }
 
-    /// Leave the current room. Returns the room ID left, whether the room is empty, and whether a game was aborted.
-    pub async fn leave_room(&self, player_id: PlayerId) -> Option<(RoomId, bool, bool)> {
+    /// Leave the current room.
+    ///
+    /// Returns `(room_id, is_empty, game_aborted, was_realtime)`.
+    /// `was_realtime` is `true` when the aborted game was a realtime room — in that
+    /// case `cancel_realtime_for_disconnect` has already broadcast `GameOver`, so
+    /// callers must NOT emit a second `GameOver`.
+    pub async fn leave_room(&self, player_id: PlayerId) -> Option<(RoomId, bool, bool, bool)> {
         let room_id = {
             let mut pr = self.player_rooms.write().await;
             pr.remove(&player_id)?
@@ -422,8 +427,8 @@ impl LobbyManager {
             }
         }
 
-        info!(%room_id, %player_id, is_empty, game_aborted, "player left room");
-        Some((room_id, is_empty, game_aborted))
+        info!(%room_id, %player_id, is_empty, game_aborted, had_realtime, "player left room");
+        Some((room_id, is_empty, game_aborted, had_realtime))
     }
 
     /// Get the list of rooms as summaries for the lobby screen.
@@ -584,7 +589,7 @@ mod tests {
         lobby.join_room(room_id, guest).await.unwrap();
 
         let result = lobby.leave_room(host_id).await;
-        assert_eq!(result, Some((room_id, false, true))); // not empty, bob still there, game aborted
+        assert_eq!(result, Some((room_id, false, true, false))); // not empty, bob still there, turn-based game aborted
 
         let rooms = lobby.list_rooms().await;
         assert_eq!(rooms[0].player_count, 1);
@@ -602,7 +607,7 @@ mod tests {
             .unwrap();
 
         let result = lobby.leave_room(host_id).await;
-        assert_eq!(result, Some((room_id, true, false))); // empty now
+        assert_eq!(result, Some((room_id, true, false, false))); // empty now, no game was running
     }
 
     #[tokio::test]

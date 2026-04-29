@@ -53,6 +53,16 @@ async fn main() {
         std::process::exit(1);
     });
 
+    // Enforce minimum secret entropy — a short secret makes token forgery trivial.
+    if jwt_secret.len() < 32 {
+        error!(
+            "JWT secret is too short ({} bytes, minimum 32). \
+             Generate a strong secret with: openssl rand -base64 32",
+            jwt_secret.len()
+        );
+        std::process::exit(1);
+    }
+
     let jwt = auth::jwt::JwtManager::new(jwt_secret.as_bytes(), config.auth.token_expiry_secs);
 
     let lobby = Arc::new(lobby::manager::LobbyManager::new());
@@ -126,7 +136,7 @@ async fn main() {
         tokio::spawn(async move {
             match tls_acceptor.accept(tcp_stream).await {
                 Ok(tls_stream) => {
-                    handle_connection(tls_stream, state).await;
+                    handle_connection(tls_stream, peer_addr, state).await;
                 }
                 Err(e) => {
                     error!(%peer_addr, "TLS handshake failed: {e}");
