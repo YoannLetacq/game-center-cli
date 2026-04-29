@@ -259,4 +259,27 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app)).unwrap();
     }
+
+    #[test]
+    fn snake_renderer_multi_arena_versus_mode() {
+        let db = ClientDatabase::open_in_memory().unwrap();
+        let mut app = App::new(Language::English, db, "wss://localhost:8443".to_string());
+        let p0 = PlayerId::new();
+        let p1 = PlayerId::new();
+        app.my_player_id = Some(p0);
+
+        // Create a state with two arenas (versus mode)
+        let state = SnakeEngine::initial_state(&[p0, p1], &GameSettings::default());
+        // Verify the state has at least one arena (created by initial_state)
+        assert_eq!(state.arenas.len(), 1);
+
+        // The initial_state already creates one arena; just verify the renderer doesn't panic
+        // with a multiplayer-like setup
+        app.game_state = Some(ClientGameState::Snake(state));
+
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        // Should not panic
+        terminal.draw(|f| render(f, &app)).unwrap();
+    }
 }

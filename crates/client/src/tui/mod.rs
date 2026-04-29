@@ -36,7 +36,13 @@ pub fn run(mut app: App) -> io::Result<()> {
         // Draw
         terminal.draw(|frame| {
             let area = frame.area();
-            match render::terminal_fit::check_fit(area) {
+            // Determine current game type for terminal fit check
+            let game_type = if app.screen == Screen::InGame {
+                Some(app.current_game_type)
+            } else {
+                None
+            };
+            match render::terminal_fit::check_fit_for_game(area, game_type) {
                 render::terminal_fit::TerminalFit::TooSmall => {
                     render::terminal_fit::render_too_small(frame, area);
                     return;
