@@ -10,9 +10,9 @@ Play classic games against a bot locally or against other players online.
 |------|--------|-------------|-------------------|
 | Tic-Tac-Toe | Available | Easy / Hard (minimax) | 2 players |
 | Connect 4 | Available | Easy / Hard (alpha-beta depth 6) | 2 players |
-| Checkers | Planned | - | - |
-| Chess | Planned | - | - |
-| Snake | Planned | - | - |
+| Checkers | Available | Easy / Hard | 2 players |
+| Chess | Available | Easy / Hard | 2 players |
+| Snake | Available | Easy / Hard | 2 players |
 | Block Breaker | Planned | - | - |
 | Pacman | Planned | - | - |
 
@@ -23,15 +23,40 @@ Play classic games against a bot locally or against other players online.
 - Rust stable toolchain (`rustup` recommended)
 - OpenSSL development headers (for TLS)
 
-### Play Solo (no server needed)
+### Quick Dev Start (no certs or secrets needed)
+
+For a fresh clone that "just works", use dev mode:
 
 ```bash
-cargo run -p gc-client
+# Server with auto-generated ephemeral TLS cert and built-in JWT secret
+cargo run -p gc-server -- --dev
 ```
 
-Login with any credentials, then press **B** in the lobby to start a solo game against the bot. Choose **E** for Easy or **H** for Hard difficulty.
+In another terminal:
 
-### Run the Server
+```bash
+# Client connecting to dev server
+cargo run -p gc-client -- --dev
+```
+
+Login with any credentials and start playing. Certificates and secrets are generated/synthesized at startup—nothing to configure.
+
+Alternatively, set the environment variable:
+
+```bash
+GC_DEV=1 cargo run -p gc-server
+GC_DEV=1 cargo run -p gc-client
+```
+
+Or for client-only insecure TLS:
+
+```bash
+GC_INSECURE_TLS=1 cargo run -p gc-client
+```
+
+### Production Setup
+
+For a real deployment, generate proper TLS certificates and a strong JWT secret:
 
 ```bash
 # Generate self-signed certs for development
@@ -42,8 +67,8 @@ openssl req -x509 -newkey rsa:2048 -keyout certs/server.key -out certs/server.cr
 # Copy and edit server config
 cp server.example.toml server.toml
 
-# Set the JWT signing secret
-export GC_JWT_SECRET="your-secret-here"
+# Generate a strong JWT secret
+export GC_JWT_SECRET="$(openssl rand -base64 32)"
 
 # Start the server
 cargo run -p gc-server
@@ -51,7 +76,7 @@ cargo run -p gc-server
 
 The server listens on `wss://0.0.0.0:8443` by default.
 
-### Connect a Client
+### Connect a Client (Production)
 
 ```bash
 cargo run -p gc-client
@@ -66,6 +91,7 @@ Register or login, then create or join a room from the lobby.
 |-----|--------|
 | **B** | Play vs Bot (solo) |
 | **C** | Create online room |
+| **G** | Cycle game type (Tic-Tac-Toe → Connect 4 → Checkers → Chess → Snake) |
 | **Enter** | Join selected room |
 | **R** | Refresh room list |
 | **Up/Down** | Navigate room list |
@@ -87,6 +113,26 @@ Register or login, then create or join a room from the lobby.
 | **R** | Rematch (after game over) |
 | **Esc** | Leave game |
 
+### In Game (Checkers)
+| Key | Action |
+|-----|--------|
+| **Arrow keys** | Move cursor |
+| **Enter** | Select piece / confirm target / continue jump chain |
+| **Esc** | Cancel selection / leave game |
+
+### In Game (Chess)
+| Key | Action |
+|-----|--------|
+| **Arrow keys** | Move cursor |
+| **Enter** | Select piece / confirm target / choose promotion piece |
+| **Esc** | Cancel selection / leave game |
+
+### In Game (Snake)
+| Key | Action |
+|-----|--------|
+| **Arrow keys** | Change snake direction |
+| **Esc** | Leave game |
+
 ## Architecture
 
 ```
@@ -102,9 +148,23 @@ game-center-cli/
 
 - **Wire protocol**: MessagePack over WebSocket+TLS. Every message wrapped in `Envelope { version, seq, payload }`.
 - **Server authority**: Server validates all moves via `GameEngine::validate_move()` before broadcasting. Clients cannot cheat.
-- **Authentication**: Argon2 password hashing, JWT tokens (HS256, 7-day expiry).
-- **Game engines**: Shared between client and server. The `GameEngine` trait defines `initial_state`, `validate_move`, `apply_move`, `is_terminal`, `current_player`.
+- **Game engines**: Two traits for different game styles:
+  - **Turn-based** (`GameEngine`): Tic-Tac-Toe, Connect 4, Checkers, Chess. Shared between client and server.
+  - **Realtime** (`RealtimeGameEngine`): Snake. Server-driven tick loop (10 Hz) with client inputs buffered per-tick.
+- **Authentication**: Argon2 password hashing (concurrency-capped to prevent DoS), JWT tokens (HS256, 7-day expiry).
 - **i18n**: English and French. Auto-detected from `$LANG`.
+
+## Security
+
+The server implements defense-in-depth hardening:
+
+- **Connection cap**: Maximum 1024 concurrent connections to prevent FD exhaustion and TLS handshake DoS.
+- **Auth rate limiting**: Failed login attempts are rate-limited per IP to prevent brute force.
+- **Argon2 concurrency cap**: Password hashing semaphore limits concurrent operations to half available CPUs (minimum 2), preventing hash-bomb DoS.
+- **Payload caps**: Message size limits prevent unbounded memory consumption.
+- **Race-free room operations**: Room state transitions are atomic; no TOCTOU windows.
+- **Server-authoritative validation**: All moves validated server-side before broadcasting. Client-side validation is for UX only.
+- **Session ownership**: Disconnect messages only accepted from the session's owning connection.
 
 ## Configuration
 
