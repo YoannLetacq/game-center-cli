@@ -41,6 +41,9 @@ pub fn render(frame: &mut Frame, app: &App) {
     if state.game_over {
         render_game_over_banner(frame, chunks[1], state);
     }
+    if app.bb_paused && !state.game_over {
+        render_pause_banner(frame, chunks[1]);
+    }
     if app.show_help {
         render_help_modal(frame);
     }
@@ -86,10 +89,12 @@ fn render_header(frame: &mut Frame, area: Rect, state: &BlockBreakerState, app: 
 fn render_footer(frame: &mut Frame, area: Rect, state: &BlockBreakerState, app: &App) {
     let text = if state.game_over {
         "R: Restart  |  Esc: Leave"
+    } else if app.bb_paused {
+        "PAUSED  |  Space: Resume  |  Esc: Leave"
     } else if any_ball_stuck(state) {
-        "Space: Launch  |  ←/→: Move paddle  |  Esc: Leave  |  I: Help"
+        "Space: Launch  |  ←/→: Move paddle  |  Esc: Pause  |  I: Help"
     } else {
-        "←/→: Move paddle  |  Esc: Leave  |  I: Help"
+        "←/→: Move paddle  |  Esc: Pause  |  I: Help"
     };
     let _ = app;
     let p = Paragraph::new(text)
@@ -250,6 +255,33 @@ fn render_game_over_banner(frame: &mut Frame, arena_area: Rect, state: &BlockBre
     frame.render_widget(banner, rect);
 }
 
+fn render_pause_banner(frame: &mut Frame, arena_area: Rect) {
+    let lines = [
+        Line::from(Span::styled(
+            "PAUSED",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .alignment(Alignment::Center),
+        Line::from("").alignment(Alignment::Center),
+        Line::from("Space: Resume   Esc: Leave").alignment(Alignment::Center),
+    ];
+    let width = 36u16.min(arena_area.width);
+    let height = 5u16.min(arena_area.height);
+    let x = arena_area.x + arena_area.width.saturating_sub(width) / 2;
+    let y = arena_area.y + arena_area.height.saturating_sub(height) / 2;
+    let rect = Rect::new(x, y, width, height);
+    frame.render_widget(Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow));
+    let p = Paragraph::new(lines.to_vec())
+        .block(block)
+        .alignment(Alignment::Center);
+    frame.render_widget(p, rect);
+}
+
 fn render_help_modal(frame: &mut Frame) {
     let area = centered_rect(60, 60, frame.area());
     frame.render_widget(Clear, area);
@@ -267,7 +299,7 @@ fn render_help_modal(frame: &mut Frame) {
         "  ←/→   Move paddle",
         "  Space Launch ball",
         "  I     Toggle this help",
-        "  Esc   Leave game",
+        "  Esc   Pause (press Esc again to leave)",
     ]
     .into_iter()
     .map(Line::from)

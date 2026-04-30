@@ -207,6 +207,15 @@ fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers, net: &Netwo
                 return;
             }
             Screen::InGame if app.game_mode != GameMode::Online => {
+                // Block Breaker: first Esc pauses, second Esc leaves.
+                if matches!(&app.game_state, Some(app::ClientGameState::BlockBreaker(_)))
+                    && !app.bb_paused
+                    && app.game_over.is_none()
+                {
+                    app.bb_paused = true;
+                    app.bb_input_dir = 0;
+                    return;
+                }
                 app.leave_solo_game();
                 return;
             }
@@ -862,6 +871,14 @@ fn is_opposite(a: gc_shared::game::snake::Direction, b: gc_shared::game::snake::
 }
 
 fn handle_blockbreaker_key(app: &mut App, code: KeyCode) {
+    if app.bb_paused {
+        // While paused: Space resumes; Esc is handled upstream (leave).
+        if matches!(code, KeyCode::Char(' ') | KeyCode::Enter) {
+            app.bb_paused = false;
+            app.bb_last_tick = Some(std::time::Instant::now());
+        }
+        return;
+    }
     match code {
         KeyCode::Left | KeyCode::Char('a') | KeyCode::Char('A') => app.bb_set_dir(-1),
         KeyCode::Right | KeyCode::Char('d') | KeyCode::Char('D') => app.bb_set_dir(1),

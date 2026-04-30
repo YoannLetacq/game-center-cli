@@ -31,9 +31,10 @@ pub const PADDLE_INIT_W: f32 = 10.0;
 /// Logical 8× starting size — clamped to the arena width at apply time.
 pub const PADDLE_MAX_W: f32 = PADDLE_INIT_W * 8.0;
 pub const PADDLE_GROW_STEP: f32 = 4.0;
-/// Sub-cells per second while a direction key is held. ~33 Hz tick budget
-/// → ≈3 sub-cells per frame, which feels responsive without overshoot.
-pub const PADDLE_KEY_VEL: f32 = 95.0;
+/// Sub-cells per second while a direction key is held. Tuned together with
+/// the client's DIR_TIMEOUT_MS so a single key tap moves the paddle a
+/// readable, controllable distance instead of teleporting halfway across.
+pub const PADDLE_KEY_VEL: f32 = 45.0;
 pub const PADDLE_INERTIA_DECAY_MS: u64 = 60;
 pub const PADDLE_BOUNCE_INERTIA: f32 = 0.35;
 
@@ -518,9 +519,10 @@ pub fn tick(state: &mut BlockBreakerState, input: &BBInput, dt_ms: u32) {
             ball.x = state.paddle_x;
             ball.y = paddle_y_top - 1.0;
             if launch_now {
-                let angle = -PI / 2.0 + 0.05;
-                ball.vx = state.speed * angle.cos();
-                ball.vy = state.speed * angle.sin();
+                // Straight up: no initial horizontal bias. Player's first
+                // paddle bounce decides the direction.
+                ball.vx = 0.0;
+                ball.vy = -state.speed;
                 ball.stuck = false;
                 launch_now = false; // launch one ball per input tick
             }

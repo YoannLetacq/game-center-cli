@@ -251,6 +251,9 @@ pub struct App {
     pub bb_last_key_at: Option<Instant>,
     /// Last time a Block Breaker tick was applied (inline 33 Hz scheduler).
     pub bb_last_tick: Option<Instant>,
+    /// Block Breaker pause flag. First Esc pauses; second Esc leaves; Space
+    /// resumes. Tick is skipped while paused so physics freezes.
+    pub bb_paused: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -313,6 +316,7 @@ impl App {
             bb_launch_pending: false,
             bb_last_key_at: None,
             bb_last_tick: None,
+            bb_paused: false,
         }
     }
 
@@ -542,6 +546,7 @@ impl App {
                 self.bb_launch_pending = false;
                 self.bb_last_key_at = None;
                 self.bb_last_tick = Some(Instant::now());
+                self.bb_paused = false;
                 ClientGameState::BlockBreaker(s)
             }
             _ => return,
@@ -725,10 +730,22 @@ impl App {
 
     /// Update paddle direction from the latest key event. dir = -1, 0, +1.
     /// Holding the key produces repeated key events; we just refresh the
-    /// timestamp so the tick keeps the paddle moving.
+    /// timestamp so the tick keeps the paddle moving. Each key event also
+    /// applies a small instant impulse so the paddle responds the moment a
+    /// key is pressed — bridges the OS initial-repeat-delay gap that would
+    /// otherwise look like a stall before the paddle starts moving.
     pub fn bb_set_dir(&mut self, dir: i32) {
-        self.bb_input_dir = dir.clamp(-1, 1);
+        let dir = dir.clamp(-1, 1);
+        self.bb_input_dir = dir;
         self.bb_last_key_at = Some(Instant::now());
+        if dir != 0
+            && let Some(ClientGameState::BlockBreaker(state)) = self.game_state.as_mut()
+        {
+            const IMPULSE: f32 = 1.5;
+            state.paddle_x += dir as f32 * IMPULSE;
+            let half = state.paddle_w / 2.0;
+            state.paddle_x = state.paddle_x.clamp(half, state.arena_w as f32 - half);
+        }
     }
 
     /// Request the next ball launch (Space).
@@ -748,6 +765,11 @@ impl App {
         let Some(ClientGameState::BlockBreaker(_)) = self.game_state.as_ref() else {
             return;
         };
+        if self.bb_paused {
+            // Freeze time while paused so unpausing resumes from the same dt.
+            self.bb_last_tick = Some(Instant::now());
+            return;
+        }
         let now = Instant::now();
         let elapsed_ms = self
             .bb_last_tick
@@ -760,11 +782,10 @@ impl App {
 
         // Auto-clear paddle direction if no key seen recently — terminals
         // don't expose key-up, so we infer "key released" from inactivity.
-        // The OS initial-repeat delay is typically 250–500 ms; values
-        // shorter than that produce a visible "stutter then resume" while
-        // the player holds a direction. 600 ms safely covers the worst
-        // common case at the cost of a slightly delayed actual release.
-        const DIR_TIMEOUT_MS: u128 = 600;
+        // Short window so a single tap is a discrete nudge rather than a
+        // half-arena teleport; key-repeat (typical 30–50 ms gap once
+        // engaged) still keeps motion smooth while held.
+        const DIR_TIMEOUT_MS: u128 = 60;
         if let Some(last) = self.bb_last_key_at
             && now.duration_since(last).as_millis() > DIR_TIMEOUT_MS
         {
